@@ -207,6 +207,18 @@ STATIC char *regprop __((const char *));
 char *progp;
 #endif
 
+void
+free_tregexp (prog)
+	tregexp *prog;
+{
+	if (prog != NULL) {
+		if (prog->pattern)
+			free((void*)(prog->pattern));
+		free(prog);
+	}
+}
+
+
 /*
  - tregcomp - compile a regular expression into internal code
  *
@@ -254,7 +266,11 @@ const char *exp;
 /* printf("tregexp %x: %s\n", prog, exp); */
 	if (prog == NULL)
 		FAIL("out of space");
-	prog->pattern = exp;
+	prog->pattern = strdup(exp);
+	if (!prog->pattern) {
+		free((char*)prog);
+		FAIL("out of space");
+	}
 	regprog = prog;
 
 	/* Second pass: emit code. */
@@ -1374,7 +1390,7 @@ tregerror(s, prog)
  * $ returns the number of characters in dest, or 0 if no expansion
  * took place.
  */
-const char *
+char *
 tregsub(prog, n)
 	tregexp *prog;
 	int n;
@@ -1402,13 +1418,13 @@ tregsub(prog, n)
 	ts = prog->startp[n];
 
 	/* Must use malloc()ed buffer -- May resize while processing */
-	buflen = 4000;
+	buflen = 100;
 	buf = (char*)malloc(buflen);
 	len = printdToken(&buf, &buflen, ts, te, 0);
 	buf[len] = '\0';
 
-	cp = (char*) tmalloc(len+1);
-	memcpy(cp,buf,len+1);
+	cp = dupnstr(buf, len); /* caller does need this! */
+
 	free(buf);
 
 	return cp;

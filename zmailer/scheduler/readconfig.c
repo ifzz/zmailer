@@ -49,8 +49,6 @@ static int rc_sysnice     __((char *key, char *arg, struct config_entry *ce));
 
 extern int errno;
 
-static const char *mailbin = NULL;
-
 extern struct group *getgrnam();
 extern struct passwd *getpwnam();
 
@@ -520,19 +518,7 @@ static int rc_command(key, arg, ce)
 	char *cp, **av, *argv[100];
 	int j;
 
-	if (*arg != '/') {
-
-	  if (mailbin == NULL)
-	    mailbin = getzenv("MAILBIN");
-	  if (mailbin == NULL)
-	    mailbin = MAILBIN;
-
-	  ce->command = emalloc(strlen(mailbin)+1+strlen(qdefaultdir)
-				+1+strlen(arg)+1);
-	  sprintf(ce->command,
-		  "%s/%s/%s", mailbin, qdefaultdir, arg);
-	} else
-	  ce->command = strsave(arg);
+	ce->command = strsave(arg);
 	j = 0;
 	for (cp = ce->command; *cp != '\0' && isascii(*cp);) {
 	  argv[j++] = cp;

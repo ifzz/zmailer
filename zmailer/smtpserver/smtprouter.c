@@ -4,7 +4,7 @@
  */
 /*
  *    Several extensive changes by Matti Aarnio <mea@nic.funet.fi>
- *      Copyright 1991-1997.
+ *      Copyright 1991-1999.
  */
 
 #include "smtpserver.h"
@@ -19,7 +19,7 @@
 
 static char promptbuf[30];
 static int promptlen;
-static FILE *tofp, *fromfp;
+static FILE *tofp = NULL, *fromfp = NULL;
 
 static char *mgets __((SmtpState * SS, int *, FILE *));
 
@@ -47,11 +47,18 @@ FILE *fp;
 	    break;
 	}
 	++cp;
-	if (strncmp(cp - promptlen, promptbuf, promptlen) == 0) {
+	if ((cp - buf) >= promptlen &&
+	    strncmp(cp - promptlen, promptbuf, promptlen) == 0) {
+
+	    *cp = 0;
+	    if (debug)
+	      type(SS,0,NULL,"mgets() buf=\"%s\"\r\n", buf);
+
 	    free(buf);
 	    buf = NULL;
 	    *flagp = 1;
 	    return NULL;
+
 	}
 	if (bufsize - 2 < ccnt) {
 	    bufsize <<= 1;
@@ -64,10 +71,11 @@ FILE *fp;
 	*cp = '\0';
 
     if (debug && buf)
-	fprintf(stdout, "000 '%s'\r\n", buf);
+	type(SS,0,NULL, "mgets() buf=\"%s\"\r\n", buf);
 
     if (c == EOF) {
-	printf("got EOF!\n");
+	if (debug)
+	  type(SS,0,NULL,"mgets() got EOF!\r\n");
 	free(buf);
 	return NULL;
     }
@@ -81,7 +89,7 @@ static int callr __((SmtpState * SS));
 static int callr(SS)
 SmtpState *SS;
 {
-    int sawend, rpid, to[2], from[2];
+    int sawend, rpid = 0, to[2], from[2];
     char *bufp, *cp;
 
     if (pipe(to) < 0 || pipe(from) < 0)
@@ -114,7 +122,11 @@ SmtpState *SS;
 	close(from[0]);
 	close(from[1]);
 	runasrootuser();	/* XXX: security alert! */
+#ifdef HAVE_PUTENV
+	putenv("SMTPSERVER=y");
+#else
 	environ = (char **) newenviron;
+#endif
 	execl(routerprog, "router", "-io-i", (char *) NULL);
 #define	BADEXEC	"8@$#&(\n\n"
 	write(1, BADEXEC, strlen(BADEXEC));
@@ -145,6 +157,11 @@ SmtpState *SS;
     fprintf(tofp, "PS1='%s' ; %s %s '%s' '%s'\n", promptbuf,
 	    ROUTER_SERVER, RKEY_INIT, SS->rhostname, SS->ihostaddr);
     fflush(tofp);
+    if (debug) {
+      type(SS,0,NULL, "==> PS1='%s' ; %s %s '%s' '%s'\r\n", promptbuf,
+	      ROUTER_SERVER, RKEY_INIT, SS->rhostname, SS->ihostaddr);
+      typeflush(SS);
+    }
 
     sawend = 0;
     while ((bufp = mgets(SS, &sawend, fromfp)) != NULL) {
@@ -157,7 +174,7 @@ SmtpState *SS;
 	free(bufp);
     }
 
-    return pid;
+    return rpid;
 }
 
 void killr(SS, rpid)
@@ -183,31 +200,61 @@ const char *function, *args;
 const int holdlast, len;
 {
     char *bufp, *prevb = NULL;
-    int sawend = 0, i;
+    int sawend = 0, i, j, s;
     const char *args0 = args;
 
     if (args == NULL) {
 	type(SS, 501, NULL, NULL);
 	return NULL;
     }
+    if (!enable_router) {
+	type(SS, 400, "4.4.0","Interactive routing subsystem is not enabled");
+	return NULL;
+    }
     if (routerpid <= 0 && (routerpid = callr(SS)) <= 0) {
 	type(SS, 451, NULL, NULL);
 	return NULL;
     }
-    fprintf(tofp, "%s %s \"", ROUTER_SERVER, function);
 
-    /* Process all double-quotes and backslashes so that
-       no surprises happen.. */
+    j = 20 + strlen(ROUTER_SERVER) + strlen(function);
+    bufp = malloc(j);
+    if (!bufp) {
+      type(SS, 400, NULL, "Huh! Out of memory!");
+      return NULL;
+    }
+    sprintf(bufp, "%s %s '", ROUTER_SERVER, function);
+    s = strlen(bufp);
+
+    /* Wrap the user input string into simple quotes, then if
+       the input string contains said character, do (difficult)
+       '...'"'"'...' juggling of the quotes. */
 
     for (i = 0; *args && i < len; ++args, ++i) {
-	if (*args == '\\' || *args == '"')
-	    putc('\\', tofp);
-	putc(*args, tofp);
+	if ((s + 10) >= j) {
+	  j += 20;
+	  bufp = realloc(bufp,j);
+	  if (!bufp) {
+	    type(SS, 400, NULL, "Huh! Out of memory!");
+	    return NULL;
+	  }
+	}
+	if (*args == '\'') {
+	  strcpy(bufp+s, "'\"'\"");
+	  s += strlen(bufp+s);
+	}
+	bufp[s++] = *args;
     }
-    fprintf(tofp, "\"\n");
-    fflush(tofp);
+    bufp[s++] = '\'';
+    bufp[s] = 0;
 
-    for (;;) {
+    fprintf(tofp, "%s\n", bufp);
+    fflush(tofp);
+    if (debug)
+      type(SS, 0, NULL, "==> %s", bufp);
+
+    free(bufp); /* Its done its job, throw it away.. */
+
+    for ( ;!sawend; ) {
 	/*
 	 * We want to give the router the opportunity to report
 	 * result codes, e.g. for boolean requests.  If the first
@@ -215,7 +262,14 @@ const int holdlast, len;
 	 * then pass through.
 	 */
 	bufp = mgets(SS, &sawend, fromfp);
+
+	if (debug)
+	  type(SS, 0, NULL, "mgets()->%p (%s), sawend=%d\r\n",
+	       bufp, (bufp ? bufp : "<NULL>"), sawend);
+
 	if (!bufp) {
+
+
 	    /* Huh! Got an EOF, while propably didn't expect it ?
 	       Lets find out what the subprocess status was */
 	    bufp = emalloc(80 + strlen(args0) + strlen(function) +
@@ -224,17 +278,18 @@ const int holdlast, len;
 	    break;
 	}
 
-	if (debug) {
-	    fprintf(stdout, "001 Got string: '%s'\r\n", bufp);
-	    typeflush(SS);
-	}
 	if (prevb != NULL) {
 	    if (strlen(prevb) > 4 &&
-	      isdigit(prevb[0]) && isdigit(prevb[1]) && isdigit(prevb[2])
+		isdigit(prevb[0]) && isdigit(prevb[1]) && isdigit(prevb[2])
 		&& (prevb[3] == ' ' || prevb[3] == '-')) {
-		printf("%s\r\n", prevb);
+
+	        int code = atoi(prevb);
+		type(SS, -code, NULL, "%s", prevb+4);
+
 	    } else {
-		printf("250-%s\r\n", prevb);
+
+		type(SS, -250, NULL, "%s", prevb);
+
 	    }
 	    free(prevb);
 	}
@@ -246,17 +301,23 @@ const int holdlast, len;
 	if (strlen(prevb) > 4 &&
 	    isdigit(prevb[0]) && isdigit(prevb[1]) && isdigit(prevb[2])
 	    && (prevb[3] == ' ')) {
-	    printf("%s\r\n", prevb);
+
+	    int code = atoi(prevb);
+	    type(SS,  code, NULL, "%s", prevb+4);
+
 	} else {
-	    printf("250 %s\r\n", prevb);
+	    type(SS,  250, NULL, "%s", prevb);
 	}
 	strncpy(prevb, "dummy-replacement-string", strlen(prevb));
     } else {
 	/* Uhhh.... No output! */
 	if (!prevb)
-	    printf("500 **INTERNAL*ERROR**\r\n");
+	    type(SS, 500, NULL, "**INTERNAL*ERROR**");
     }
     typeflush(SS);
+
+    if (debug)
+      type(SS,0,NULL,"router()->%p (%s)\r\n", prevb, prevb ? prevb : "<NULL>");
 
     return prevb;		/* It may be unfreeable pointer... */
 }

@@ -9,6 +9,8 @@
  *    mboxpath [-d mailboxdir] -PP user
  *    mboxpath [-d mailboxdir] -D  user
  *    mboxpath [-d mailboxdir] -DD user
+ *    mboxpath [-d mailboxdir] -X  user
+ *    mboxpath [-d mailboxdir] -XX user
  *
  */
 
@@ -32,16 +34,18 @@
 #include "zmsignal.h"
 
 #include "ta.h"
-#include "malloc.h"
+#include "zmalloc.h"
 #include "libz.h"
 
 #ifdef HAVE_UNISTD_H
 #include <unistd.h>
 #endif
 
-
+extern int fmtmbox __((char *, int, const char *, const char *, \
+			const struct passwd *));
 int dirhashes = 0;
 int pjwhashes = 0;
+int crchashes = 0;
 const char *progname = "mboxpath";
 int D_alloc = 0;
 
@@ -76,8 +80,22 @@ static void mkhashpath(s, uname)
      char *s;
      const char *uname;
 {
-	extern int pjwhash32 __((const char *));
+	extern long pjwhash32 __((const char *));
+	extern long crc32     __((const char *));
 
+	if (crchashes) {
+	  int h = crc32(uname);
+	  switch (crchashes) {
+	  case 1:
+	    h %= 26;
+	    sprintf(s,"%c/", ('A' + h));
+	    break;
+	  default:
+	    h %= (26*26);
+	    sprintf(s,"%c/%c/", ('A' + (h / 26)), ('A' + (h % 26)));
+	    break;
+	  }
+	}
 	if (pjwhashes) {
 	  int h = pjwhash32(uname);
 	  switch (pjwhashes) {
@@ -122,6 +140,7 @@ int main(argc,argv)
 	char *s;
 	struct stat st;
 	const char **maild;
+	struct passwd *pw;
 	char pathbuf[2000]; /* more than enough, he said.. */
 
 	s = getzenv("MAILBOX");
@@ -131,13 +150,16 @@ int main(argc,argv)
 	}
 
 
-	while ((c = getopt(argc,argv,"d:DP")) != EOF) {
+	while ((c = getopt(argc,argv,"d:DPX")) != EOF) {
 	  switch (c) {
 	  case 'D':
 	    ++dirhashes;
 	    break;
 	  case 'P':
 	    ++pjwhashes;
+	    break;
+	  case 'X':
+	    ++crchashes;
 	    break;
 	  case 'd':
 	    maildirs[0] = optarg;
@@ -155,19 +177,35 @@ int main(argc,argv)
 
 	st.st_mode = 0;
 	for (maild = maildirs; *maild != NULL; ++maild) {
-	  if (stat(*maild,&st) == 0 &&
-	      S_ISDIR(st.st_mode))
+	  if (strchr(*maild,'%') || (stat(*maild,&st) == 0 &&
+	      S_ISDIR(st.st_mode)))
 	    break;
 	}
-
-	if (!S_ISDIR(st.st_mode)) {
+	if (!*maild) {
 	  fprintf(stderr,"mboxpath: Did not find any mbox directory\n");
 	  exit(8);
 	}
 
-	sprintf(pathbuf, "%s/", *maild);
-	s = pathbuf + strlen(pathbuf);
-	mkhashpath(s, uname);
-	printf( "%s\n", pathbuf);
+	if (strchr(*maild,'%')) {
+	  if ((pw=getpwnam(uname)) == NULL) {
+	    if (errno) perror("getpwnam");
+	    else fprintf(stderr,"%s: no such user\n",uname);
+	    exit(8);
+	  }
+	  if (fmtmbox(pathbuf,sizeof(pathbuf),*maild,uname,pw)) {
+	    pathbuf[70]='\0';
+	    strcat(pathbuf,"...");
+	    fprintf(stderr,"mboxpath: path does not fit in buffer: \"%s\"\n",
+			pathbuf);
+	    exit(8);
+	  } else {
+	    printf( "%s\n", pathbuf);
+	  }
+	} else {
+	  sprintf(pathbuf, "%s/", *maild);
+	  s = pathbuf + strlen(pathbuf);
+	  mkhashpath(s, uname);
+	  printf( "%s\n", pathbuf);
+	}
 	return (0);
 }

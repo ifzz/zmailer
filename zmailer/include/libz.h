@@ -79,14 +79,15 @@ extern void hp_addr_randomize __((struct hostent *hp));
 
 /* killprev.c */
 extern int killprevious   __((int sig, const char *pidfil));
+extern int killpidfile    __((const char *pidfil));
 
 /* linebuffer.c */
-extern char *linebuf;
-extern void initline      __((long blksize));
-extern int  getline       __((FILE *fp));
-extern void repos_getline __((FILE *fp, off_t pos));
-extern int  linegetrest   __((void));
-extern long lineoffset    __((FILE *fp));
+extern char *zlinebuf;
+extern void initzline      __((long blksize));
+extern int  zgetline       __((FILE *fp));
+extern void repos_zgetline __((FILE *fp, off_t pos));
+extern int  zlinegetrest   __((void));
+extern long zlineoffset    __((FILE *fp));
 
 /* loginit.c */
 extern /* RETSIGTYPE */ int loginit __((int));
@@ -114,10 +115,6 @@ extern char *rfc822date __((time_t *timep));
 /* rfc822scan.c */
 extern int  hdr_status __((const char *cp, const char *lbuf, int n, int octo));
 #ifdef Z_TOKEN_H
-extern u_long _hdr_compound __((const char *cp, long n, int cstart, int cend,
-				TokenType type, token822 *tp,
-				token822 **tlist, token822 **tlistp));
-extern const char *_unfold __((const char *start, const char *end, token822 *t));
 extern token822 * scan822 __((const char **cpp, size_t n, int c1, int c2,
 				  int allowcomments, token822 **tlistp));
 #endif
@@ -151,8 +148,8 @@ extern int strmatch __((const char *pattern, const char *term));
 /* symbol.c */
 /* include "splay.h" ! */
 
-/* taspoolid.c */
-extern void taspoolid __((char *buf, int len, time_t mtime, const char *fn));
+/* taspoolid.c */ /* Minimum buffer size: 32 bytes ! */
+extern void taspoolid __((char *buf, time_t mtime, long inodenum));
 
 /* token.c */
 #ifdef Z_TOKEN_H
@@ -165,8 +162,8 @@ extern int  printToken  __((char *buf, char *eob,
 extern int  printdToken __((char **bufp, int *buflenp,
 			    token822 *t, token822 *tend,
 			    int quotespecials));
-extern int  fprintToken __((FILE *fp, token822 *t, int onlylength));
-extern int  fprintFold  __((FILE *fp, token822 *t, int col));
+extern int  fprintToken __((FILE *fp, token822 *t, int col));
+extern int  fprintFold  __((FILE *fp, token822 *t, int col, int foldcol));
 extern void freeTokens __((token822 *t, int memtype));
 #ifdef TOKENLEN /* Defined in  "mailer.h", like AddrComponent too.. */
 extern const char *formatAddr __((AddrComponent d));

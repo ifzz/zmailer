@@ -71,6 +71,7 @@ static conscell *run_listexpand   __((conscell *avl, conscell *il));
 static conscell *run_newattribute __((conscell *avl, conscell *il));
 #endif
 
+static int run_doit      ARGCV;
 static int run_stability ARGCV;
 static int run_process   ARGCV;
 static int run_grpmems   ARGCV;
@@ -80,6 +81,7 @@ static int run_homedir   ARGCV;
 static int run_822date   ARGCV;
 static int run_filepriv  ARGCV;
 static int run_runas     ARGCV;
+static int run_cat       ARGCV;
 static int run_gensym    ARGCV;
 static void free_gensym __((void));
 static int run_uid2login ARGCV;
@@ -123,6 +125,7 @@ struct shCmd fnctns[] = {
 {	"user",		NULL,	run_caddr,	NULL,	SH_ARGV	},
 {	"attributes",	NULL,	run_cadddr,	NULL,	SH_ARGV	},
 {	"stability",	run_stability,	NULL,	NULL,	0	},
+{	"stableprocess", run_doit,	NULL,	NULL,	0	},
 {	"daemon",	run_daemon,	NULL,	NULL,	0	},
 {	"process",	run_process,	NULL,	NULL,	0	},
 {	"rfc822",	run_rfc822,	NULL,	NULL,	0	},
@@ -137,6 +140,7 @@ struct shCmd fnctns[] = {
 {	"rfc822date",	run_822date,	NULL,	NULL,	0	},
 {	"filepriv",	run_filepriv,	NULL,	NULL,	SH_ARGV	},
 {	"runas",	run_runas,	NULL,	NULL,	SH_ARGV	},
+{	"cat",		run_cat,	NULL,	NULL,	SH_ARGV	},
 {	"gensym",	run_gensym,	NULL,	NULL,	0	},
 {	"uid2login",	run_uid2login,	NULL,	NULL,	0	},
 {	"login2uid",	run_login2uid,	NULL,	NULL,	0	},
@@ -280,7 +284,7 @@ run_hostname(argc, argv)
 	if (argc > 1) {
 		memtypes oval = stickymem;
 		stickymem = MEM_MALLOC;
-		myhostname = strsave(argv[1]);
+		myhostname = strdup(argv[1]);
 		stickymem = oval;
 	} else {
 		/* can't fail... */
@@ -353,7 +357,7 @@ run_erraddrlog(argc, argv)
 
 static conscell *
 run_dblookup(avl, il)
-	conscell *avl, *il;
+	conscell *avl, *il; /* Inputs gc protected */
 {
 	conscell *l;
 
@@ -369,175 +373,66 @@ run_dblookup(avl, il)
 
 static conscell *
 run_cadr(avl, il)
-	conscell *avl, *il;
+	conscell *avl, *il; /* Inputs gc protected */
 {
-	conscell *tmp;
-
 	il = cdar(avl);
 	if (il == NULL || STRING(il) || car(il) == NULL)
 		return NULL;
 	/* cdr */
-#ifdef CONSCELL_PREV
-	/* setf preparation */
-	if (cdar(il)) {
-		il->prev = cdar(il)->prev;
-	} else if (car(il)->prev) {
-		if (car(il)->pflags)
-			il->prev = cdr(car(il)->prev);
-		else
-			il->prev = car(car(il)->prev);
-	}
-	il->pflags = 3;
-#endif
 	car(il) = cdar(il);
 
 	/* car */
-#ifdef CONSCELL_PREV
-	/* setf preparation */
-	if (car(il) == NULL) {
-		if (il->prev) {
-			il->prev = cdr(il->prev);
-			il->pflags = 0;
-		}
-		return il;
-	}
-#endif
 	car(il) = copycell(car(il));	/* don't modify malloc'ed memory! */
 	cdar(il) = NULL;
-#ifdef CONSCELL_PREV
-	car(il)->pflags |= 01 | 04;
-#endif
 	return car(il);
 }
 
 static conscell *
 run_caddr(avl, il)
-	conscell *avl, *il;
+	conscell *avl, *il; /* Inputs gc protected */
 {
-	conscell *tmp;
-
 	il = cdar(avl);
 	if (il == NULL || STRING(il) || car(il) == NULL)
 		return NULL;
 	/* cdr */
-#ifdef CONSCELL_PREV
-	/* setf preparation */
-	if (cdar(il)) {
-		il->prev = cdar(il)->prev;
-	} else if (car(il)->prev) {
-		if (car(il)->pflags)
-			il->prev = cdr(car(il)->prev);
-		else
-			il->prev = car(car(il)->prev);
-	}
-	il->pflags = 3;
-#endif
 	car(il) = cdar(il);
 
 	/* cdr */
-#ifdef CONSCELL_PREV
-	/* setf preparation */
-	if (cdar(il)) {
-		il->prev = cdar(il)->prev;
-	} else if (car(il)->prev) {
-		if (car(il)->pflags)
-			il->prev = cdr(car(il)->prev);
-		else
-			il->prev = car(car(il)->prev);
-	}
-	il->pflags = 3;
-#endif
 	car(il) = cdar(il);
 
 	/* car */
 	/* setf preparation */
 	if (car(il) == NULL) {
-#ifdef CONSCELL_PREV
-		if (il->prev) {
-			il->prev = cdr(il->prev);
-			il->pflags = 0;
-		}
-#endif
 		return il;
 	}
 	car(il) = copycell(car(il));	/* don't modify malloc'ed memory! */
 	cdar(il) = NULL;
-#ifdef CONSCELL_PREV
-	car(il)->pflags |= 01 | 04;
-#endif
 	return car(il);
 }
 
 static conscell *
 run_cadddr(avl, il)
-	conscell *avl, *il;
+	conscell *avl, *il; /* Inputs gc protected */
 {
-	conscell *tmp;
-
 	il = cdar(avl);
 	if (il == NULL || STRING(il) || car(il) == NULL)
 		return NULL;
 	/* cdr */
-#ifdef CONSCELL_PREV
-	/* setf preparation */
-	if (cdar(il)) {
-		il->prev = cdar(il)->prev;
-	} else if (car(il)->prev) {
-		if (car(il)->pflags)
-			il->prev = cdr(car(il)->prev);
-		else
-			il->prev = car(car(il)->prev);
-	}
-	il->pflags = 3;
-#endif
 	car(il) = cdar(il);
 
 	/* cdr */
-#ifdef CONSCELL_PREV
-	/* setf preparation */
-	if (cdar(il)) {
-		il->prev = cdar(il)->prev;
-	} else if (car(il)->prev) {
-		if (car(il)->pflags)
-			il->prev = cdr(car(il)->prev);
-		else
-			il->prev = car(car(il)->prev);
-	}
-	il->pflags = 3;
-#endif
 	car(il) = cdar(il);
 
 	/* cdr */
-#ifdef CONSCELL_PREV
-	/* setf preparation */
-	if (cdar(il)) {
-		il->prev = cdar(il)->prev;
-	} else if (car(il)->prev) {
-		if (car(il)->pflags)
-			il->prev = cdr(car(il)->prev);
-		else
-			il->prev = car(car(il)->prev);
-	}
-	il->pflags = 3;
-#endif
 	car(il) = cdar(il);
 
 	/* car */
 	/* setf preparation */
 	if (car(il) == NULL) {
-#ifdef CONSCELL_PREV
-		if (il->prev) {
-			il->prev = cdr(il->prev);
-			il->pflags = 0;
-		}
-#endif
 		return il;
 	}
 	car(il) = copycell(car(il));	/* don't modify malloc'ed memory! */
 	cdar(il) = NULL;
-#ifdef CONSCELL_PREV
-	car(il)->pflags |= 01 | 04;
-#endif
 	return car(il);
 }
 
@@ -638,6 +533,39 @@ rd_endstability()
 		free((char *)nbarray);
 }
 
+static int
+run_doit(argc, argv)
+	int argc;
+	const char *argv[];
+{
+	const char *filename;
+	char *sh_memlevel = getlevel(MEM_SHCMD);
+	int r;
+	const char *av[3];
+
+	if (argc != 2) {
+	  fprintf(stderr, "Usage: %s <filename>\n", argv[0]);
+	  return 1;
+	}
+
+	filename = argv[1];
+
+	/* Do one file, return value is 0 or 1,
+	   depending on actually doing something
+	   on a file */
+
+	gensym = 1;
+	av[0] = "process"; /* I think this needs to be here */
+	av[1] = filename;
+	av[2] = NULL;
+	r = s_apply(2, av); /* "process" filename (within  rd_doit() ) */
+	free_gensym();
+
+	setlevel(MEM_SHCMD,sh_memlevel);
+
+	return r;
+}
+
 static int rd_doit __((const char *filename, const char *dirs));
 static int
 rd_doit(filename, dirs)
@@ -675,9 +603,12 @@ rd_doit(filename, dirs)
 	if (p != NULL) {
 	  /* message file is "inode-pid" */
 	  thatpid = atoi(p+1);
+
+#if 0 /* very old thing, may harm at Solaris 2.6 ! */
 	  if (thatpid < 10) {	/* old-style locking.. */
 	    thatpid = 0;
 	  }
+#endif
 	  /* Probe it!
 	     Does the process exist ? */
 	  if (thatpid && kill(thatpid,0)==0 && thatpid != router_id) {
@@ -916,6 +847,8 @@ run_daemon(argc, argv)
 	memtypes oval = stickymem;
 	struct stat stb;
 
+	router_id = getpid();
+
 	SIGNAL_HANDLE(SIGTERM, sig_exit);	/* mustexit = 1 */
 	for (i=0; i<ROUTERDIR_CNT; ++i) {
 		dirp[i] = NULL; dirs[i] = NULL;
@@ -943,7 +876,7 @@ run_daemon(argc, argv)
 			  dirp[i]->dd_size = 0;
 #endif
 #endif
-			  dirs[i] = strsave(pathbuf);
+			  dirs[i] = strdup(pathbuf);
 			  ++i;
 			}
 			if (s)
@@ -960,7 +893,7 @@ run_daemon(argc, argv)
 	stickymem = oval;
 	did_cnt = 0;
 	i = -1;
-	for (;;) {
+	for (; !mustexit ;) {
 		++i;	/* Increment it */
 		/* The last of the alternate dirs ?  Reset.. */
 		if (i >= ROUTERDIR_CNT || dirs[i] == NULL) {
@@ -1359,9 +1292,10 @@ run_listexpand(avl, il)
 	struct envelope *e;
 	struct address *ap, *aroot = NULL, **atail = &aroot;
 	token822 *t;
-	conscell *al, *alp = NULL, *tmp;
+	conscell *al = NULL, *alp = NULL, *tmp = NULL;
 	conscell *plustail = NULL, *domain = NULL;
-	char *localpart, *origaddr, *attributenam;
+	conscell *l, *lrc;
+	char *localpart = NULL, *origaddr = NULL, *attributenam = NULL;
 	int c, n, errflag, stuff;
 	volatile int cnt;
 	const char *comment, *erroraddress;
@@ -1378,6 +1312,7 @@ run_listexpand(avl, il)
 	int okaddresses = 0;
 	int errcount = 0;
 	int linecnt = 0;
+	GCVARS3;
 
 	il = cdar(avl); /* The CDR (next) of the arg list.. */
 
@@ -1464,7 +1399,7 @@ run_listexpand(avl, il)
 	hs.h_descriptor = &aliashdr;
 	hs.h_pname = (char*) car(avl)->string;
 
-	initline(4096);
+	initzline(4096);
 
 	/*
 	 * These hoops are so we can do this for both real stdin and
@@ -1487,18 +1422,18 @@ run_listexpand(avl, il)
 	/* use a constant buffer to avoid memory leaks from stdio usage */
 	setvbuf(fp, buf, _IOFBF, sizeof buf);
 	c = 0;
-	while ((n = getline(fp)) > 0) {
+	while ((n = zgetline(fp)) > 0) {
 		++linecnt;
 		/*
 		 * For sendmail compatibility, addresses may not cross line
 		 * boundaries, and line boundary is just as good an address
 		 * separator as comma is, sigh.
 		 */
-		if (linebuf[n-1] == '\n')
+		if (zlinebuf[n-1] == '\n')
 			--n;
 		stuff = 0;
-		s_end = &linebuf[n];
-		for (s = linebuf; s < s_end; ++s) {
+		s_end = & zlinebuf[n];
+		for (s = zlinebuf; s < s_end; ++s) {
 			if (isascii(*s) && !isspace(*s))
 				c = stuff = 1;
 			if (*s == ',')
@@ -1507,7 +1442,7 @@ run_listexpand(avl, il)
 		if (!stuff)
 			continue;
 		if (c) {
-			linebuf[n] = ',';
+			zlinebuf[n] = ',';
 			++n;
 		}
 
@@ -1518,8 +1453,8 @@ run_listexpand(avl, il)
 		 * This is just to not to force people to edit their
 		 * .forwards :-(  "\haa" works as expected  :-)
 		 **/
-		if (linebuf[0] == '\\') linebuf[0] = ' ';
-		for (s = linebuf+1; s < s_end; ++s) {
+		if (zlinebuf[0] == '\\') zlinebuf[0] = ' ';
+		for (s = zlinebuf+1; s < s_end; ++s) {
 		  if (s[-1] == ',' && s[0]=='\\') s[0] = ' ';
 		}
 		/* end of sendmail compatibility kluge */
@@ -1531,7 +1466,7 @@ run_listexpand(avl, il)
 		 * so errors will print out nicely.
 		 */
 
-		hs.h_lines = t = makeToken(linebuf, n);
+		hs.h_lines = t = makeToken(zlinebuf, n);
 		t->t_type = Line;
 
 		/* fix up any trailing comma (more sendmail
@@ -1636,11 +1571,13 @@ run_listexpand(avl, il)
 	}
 
 	cnt = 0;
-	al = NULL;
+
+	al = l = lrc = NULL;
+	GCPRO3(al, l, lrc);
+
 	for (ap = aroot; ap != NULL; ap = ap->a_next) {
-		int rc;
+		int rc, slen;
 		memtypes omem;
-		conscell *l, *lrc;
 		char *s2, *se;
 
 		buf[0] = 0;
@@ -1696,13 +1633,16 @@ run_listexpand(avl, il)
 		   (The last two were added in June-1998)
 		*/
 
-		l         = newstring(strsave(buf));
-		cdr(l)    = newstring(strsave(origaddr));
-		cddr(l)   = newstring(strsave(s));
+		slen = strlen(buf);
+		l         = newstring(dupnstr(buf, slen), slen);
+		slen = strlen(origaddr);
+		cdr(l)    = newstring(dupnstr(origaddr, slen), slen);
+		slen = strlen(s);
+		cddr(l)   = newstring(dupnstr(s, slen), slen);
 		if (plustail != NULL) {
-		  cdr(cddr(l))  = conststring(plustail->string);
+		  cdr(cddr(l))  = s_copy_chain(plustail);
 		  if (domain != NULL)
-		    cddr(cddr(l)) = conststring(domain->string);
+		    cddr(cddr(l)) = s_copy_chain(domain);
 		}
 		l = ncons(l);
 
@@ -1725,11 +1665,12 @@ run_listexpand(avl, il)
 #endif
 #if 0 /* XX: This HOLD handling didn't work ?? */
 		if (deferit && (d = v_find(DEFER))) {
-		  s_free_tree(lrc);
+		  /* s_free_tree(lrc); */
 		  lrc = NULL;
-		  l = conststring("hold");
+		  l = conststring("hold", 4);
 		  cdr(l)   = copycell(cdr(d));
-		  cddr(l)  = newstring(strsave(buf));
+		  slen = strlen(buf);
+		  cddr(l)  = newstring(dupnstr(buf, slen), slen);
 		  cdddr(l) = car(attributes);
 		  l = ncons(l);
 		  l = ncons(l);
@@ -1739,7 +1680,7 @@ run_listexpand(avl, il)
 		if (rc != 0 || lrc == NULL || !LIST(lrc)) {
 		  /* $(rrouter xx xx xx)  returned something invalid.. */
 #ifdef use_lapply
-		  s_free_tree(lrc);
+		  /* s_free_tree(lrc); */
 #endif
 		  lrc = NULL;
 		  continue;
@@ -1760,23 +1701,24 @@ run_listexpand(avl, il)
 			      progname, ROUTER);
 		      s_grind(lrc, stderr);
 #ifdef use_lapply
-		      s_free_tree(lrc);
+		      /* s_free_tree(lrc); */
 #endif
 		      lrc = NULL;
 		      if (errors_to != olderrors)
 			free(errors_to);
 		      errors_to = olderrors;
+		      UNGCPRO3;
 		      return NULL;
 		    }
-		    l = s_copy_tree(lrc);
+		    l = s_copy_chain(lrc);
 		  } else {
-		    l = s_copy_tree(lrc);
+		    l = s_copy_chain(lrc);
 		    l = ncons(l);
 		    l = ncons(l);
 		  }
 
 #ifdef use_lapply
-		  s_free_tree(lrc);
+		  /* s_free_tree(lrc); */
 #endif
 		  lrc = NULL;
 		}
@@ -1812,12 +1754,15 @@ run_listexpand(avl, il)
 	}
 
 	if (al == NULL) { /* ERROR! NO ADDRESSES! */
-	  al = conststring("error");
-	  cdr(al)  = conststring("expansion");
-	  cddr(al) = newstring(strsave(localpart));
+	  int slen;
+	  al = conststring("error", 5);
+	  cdr(al)  = conststring("expansion", 9);
+	  slen = strlen(localpart);
+	  cddr(al) = newstring(dupnstr(localpart, slen), slen);
 	  al = ncons(al);
 	  al = ncons(al);
 	}
+	UNGCPRO3;
 
 	if (errors_to != olderrors)
 	  free(errors_to);
@@ -1892,7 +1837,7 @@ run_listaddrs(argc, argv)
 	hs.h_descriptor = &aliashdr;
 	hs.h_pname = argv[0];
 
-	initline(4096);
+	initzline(4096);
 
 	/*
 	 * These hoops are so we can do this for both real stdin and
@@ -1915,18 +1860,18 @@ run_listaddrs(argc, argv)
 	/* use a constant buffer to avoid memory leaks from stdio usage */
 	setvbuf(fp, buf, _IOFBF, sizeof buf);
 	c = 0;
-	while ((n = getline(fp)) > 0) {
+	while ((n = zgetline(fp)) > 0) {
 		++linecnt;
 		/*
 		 * For sendmail compatibility, addresses may not cross line
 		 * boundaries, and line boundary is just as good an address
 		 * separator as comma is, sigh.
 		 */
-		if (linebuf[n-1] == '\n')
+		if (zlinebuf[n-1] == '\n')
 			--n;
 		stuff = 0;
-		s_end = &linebuf[n];
-		for (s = linebuf; s < s_end; ++s) {
+		s_end = &zlinebuf[n];
+		for (s = zlinebuf; s < s_end; ++s) {
 			if (isascii(*s) && !isspace(*s))
 				c = stuff = 1;
 			if (*s == ',')
@@ -1935,7 +1880,7 @@ run_listaddrs(argc, argv)
 		if (!stuff)
 			continue;
 		if (c) {
-			linebuf[n] = ',';
+			zlinebuf[n] = ',';
 			++n;
 		}
 
@@ -1946,8 +1891,8 @@ run_listaddrs(argc, argv)
 		 * This is just to not to force people to edit their
 		 * .forwards :-(  "\haa" works as expected  :-)
 		 **/
-		if (linebuf[0] == '\\') linebuf[0] = ' ';
-		for (s = linebuf+1; s < s_end; ++s) {
+		if (zlinebuf[0] == '\\') zlinebuf[0] = ' ';
+		for (s = zlinebuf+1; s < s_end; ++s) {
 		  if (s[-1] == ',' && s[0]=='\\') s[0] = ' ';
 		}
 		/* end of sendmail compatibility kluge */
@@ -1958,7 +1903,7 @@ run_listaddrs(argc, argv)
 		 * so errors will print out nicely.
 		 */
 
-		hs.h_lines = t = makeToken(linebuf, n);
+		hs.h_lines = t = makeToken(zlinebuf, n);
 		t->t_type = Line;
 
 		/* fix up any trailing comma (more sendmail
@@ -2248,6 +2193,42 @@ run_runas(argc, argv)
 	}
 
 	return r;
+}
+
+static int
+run_cat(argc, argv)
+	int argc;
+	const char *argv[];
+{
+	FILE *fp;
+	char buf[8192];
+	int i;
+	struct stat stbuf;
+
+	if (argc < 2) {
+		fprintf(stderr, "Usage: %s [filenames ...]\n", argv[0]);
+		return 1;
+	}
+
+	for ( ;argv[1] != NULL; ++argv) {
+	    /* Must be a regular file (via a symlink, though!), no
+	       pipes, sockets, devices... */
+	    if (stat(argv[1], &stbuf) == 0 && S_ISREG(stbuf.st_mode) &&
+		(fp = fopen(argv[1], "r"))) {
+	      for (;;) {
+		i = fread(buf, 1, sizeof(buf), fp);
+		if (i > 0) {
+		  int j = 0;
+		  while (j < i) {
+		    j += fwrite(buf + j, 1, i - j, stdout);
+		  }
+		} else
+		  break;
+	      }
+	    fclose(fp);
+	    }
+	}
+	return 0;
 }
 
 
@@ -2574,8 +2555,9 @@ run_condquote(argc, argv)
 	  ++s; /* Starting quote */
 	  while (*s && *s != '"') {
 	    /* While within quoted string */
-	    if (*s == '\\')
+	    if (*s == '\\') {
 	      ++s;
+	    }
 	    if (*s != 0)
 	      ++s;
 	  }
@@ -2588,6 +2570,8 @@ run_condquote(argc, argv)
 	  if (c == '\\') {
 	    ++s;
 	    c = *s;
+	    if (c == '!') /* fooo\!baar */
+	      mustquote = 1;
 	  } else if (c == ' ' || c == '\t')
 	    mustquote = 1; /* Unquoted spaces! */
 	  if (c != 0)
@@ -2598,7 +2582,7 @@ run_condquote(argc, argv)
 	len = strlen(s);
 
 	/* Quoted, and without a need for quotes */
-	if (candequote) {
+	if (!mustquote && candequote) {
 	  /* XXX: THIS SHOULD REALLY USE SOME SYNTAX SCANNER -- LIKE THAT ONE
 	          FOR SMTP: RFC821SCN()    */
 	  fwrite(argv[1] + 1, 1, len -2, stdout); /* Dequoted! */

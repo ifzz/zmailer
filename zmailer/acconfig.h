@@ -30,6 +30,10 @@
    all systems.  Though in systems without IPv6 those
    routines don't support AF_INET6 ... */
 #undef INET6
+
+/* socklen_t type can be found by including <sys/socket.h> */
+#undef HAVE_SOCKLEN_T
+
 #undef HAVE_NETINET_IN_H
 /* Sigh....  Linux 2.1.x series with IPv6  */
 #undef HAVE_NETINET_IN6_H
@@ -153,3 +157,15 @@
 
 /* */
 #undef HAVE_WHOSON_H
+
+/* HAVE_OPENSSL -- The system has www.OpenSSL.org software;
+   version 0.9.3a, very least */
+#undef HAVE_OPENSSL
+
+/* Have SleepyCat's BSD DB 2.x version of BSD DB database */
+#undef HAVE_DB_OPEN2
+/* Latter versions of 2.x have 4-args (db->cursor)() method */
+#undef HAVE_DB_CURSOR4
+
+/* For mailbox; check mailbox quota thru  checkmbsize() routine.. */
+#undef CHECK_MB_SIZE

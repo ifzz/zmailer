@@ -1,7 +1,7 @@
 /*
  *  Globals of the ZMailer  smtp-server
  *
- *  Matti Aarnio <mea@nic.funet.fi> 1997
+ *  Matti Aarnio <mea@nic.funet.fi> 1997-1999
  */
 
 
@@ -33,7 +33,7 @@
 
 #include "hostenv.h"
 #include <stdio.h>
-#include "malloc.h"
+#include "zmalloc.h"
 #include <sys/types.h>
 #include <ctype.h>
 #include <sys/time.h>
@@ -50,6 +50,7 @@
 #include <varargs.h>		/* If no  <stdarg.h>,  then presume <varargs.h> ... */
 #endif
 
+#include <netinet/in.h> /* In some systems needed before <arpa/inet.h> */
 #include <arpa/inet.h>
 
 #include "mail.h"
@@ -78,12 +79,14 @@ extern int wait();
 #include <netinet/in.h>
 #ifdef HAVE_NETINET_IN6_H
 #include <netinet/in6.h>
-#endif
+#else
 #ifdef HAVE_NETINET6_IN6_H
 #include <netinet6/in6.h>
-#endif
+#else
 #ifdef HAVE_LINUX_IN6_H
 #include <linux/in6.h>
+#endif
+#endif
 #endif
 
 #include "libc.h"
@@ -113,6 +116,11 @@ typedef union {
 
 #include "policytest.h"
 
+#ifdef HAVE_OPENSSL
+#include <openssl/ssl.h>
+#include <openssl/err.h>
+#endif /* - HAVE_OPENSSL */
+
 struct smtpconf {
     const char *pattern;
     int maxloadavg;
@@ -125,7 +133,10 @@ typedef enum {
     RecipientOrData, Data, Send, SendOrMail,
     SendAndMail, Reset, Verify, Expand, Help,
     NoOp, Quit, Turn, Tick, Verbose, DebugIdent,
-    Turnme, BData, DebugMode,
+    Turnme, BData, DebugMode, Auth,
+#ifdef HAVE_OPENSSL
+    StartTLS,
+#endif /* - HAVE_OPENSSL */
     Hello2, Mail2, Send2, Verify2	/* 8-bit extensions */
 } Command;
 
@@ -158,6 +169,18 @@ typedef struct {
     Usockaddr raddr;
     Usockaddr localsock;
 
+    int   sslmode;		/* Set, when SSL/TLS in running */
+#ifdef HAVE_OPENSSL
+    SSL * ssl;
+    char *sslwrbuf;
+    int   sslwrspace, sslwrin, sslwrout;
+    /* space, how much stuff in, where the output cursor is */
+#endif /* - HAVE_OPENSSL */
+    char *tls_cipher_info;
+    char *tls_ccert_subject;
+    char *tls_ccert_issuer;
+    char *tls_ccert_fingerprint;
+
     int  s_bufread;
     int  s_readout;
     int  s_status;
@@ -169,9 +192,10 @@ typedef struct {
     /* For BDAT -command */
     int  bdata_blocknum;
     int  mvbstate;
+    char *authuser;
 
     char ident_username[MAXHOSTNAMELEN + MAXHOSTNAMELEN + 2];
-    char helobuf[SMTPLINESIZE];
+    char helobuf[200]; /* Carefully limited copy into this buffer */
     struct smtpconf *cfinfo;
 
 #ifdef HAVE_WHOSON_H
@@ -191,21 +215,49 @@ typedef struct {
 extern char *helplines[];
 #define HDR220MAX 4
 extern char *hdr220lines[];
+extern char logtag[];
 
 extern long availspace;
+extern long minimum_availspace;
 extern long maxsize;
 extern int MaxErrorRecipients;
 extern int TcpRcvBufferSize;
 extern int TcpXmitBufferSize;
 extern int ListenQueueSize;
 extern int MaxSameIpSource;
+extern int MaxParallelConnections;
 extern int percent_accept;
 extern int smtp_syslog;
 extern int allow_source_route;
 extern int debugcmdok;
 extern int expncmdok;
 extern int vrfycmdok;
+extern int pipeliningok;
+extern int mime8bitok;
+extern int chunkingok;
+extern int enhancedstatusok;
+extern int multilinereplies;
+extern int dsn_ok;
+extern int auth_ok;
+extern int ehlo_ok;
+extern int etrn_ok;
+extern int starttls_ok;
+extern int msa_mode;
+extern char *tls_cert_file, *tls_key_file, *tls_CAfile, *tls_CApath;
+extern int tls_loglevel, tls_enforce_tls, tls_ccert_vd;
+extern int tls_ask_cert, tls_req_cert;
+extern int log_rcvd_whoson, log_rcvd_ident, log_rcvd_authuser;
+extern int log_rcvd_tls_mode, log_rcvd_tls_ccert;
+extern int auth_login_without_tls;
+extern char *smtpauth_via_pipe;
 extern int strict_protocol;
+extern int rcptlimitcnt;
+extern int enable_router;
+extern int use_tcpwrapper;
+
+extern int bindaddr_set, bindport_set;
+extern u_short   bindport;
+extern Usockaddr bindaddr;
 
 extern const char *progname;
 extern int debug, skeptical, checkhelo, ident_flag, verbose;
@@ -263,6 +315,7 @@ extern const char *m513;
 extern const char *m515;
 extern const char *m517;
 extern const char *m518;
+extern const char *m530;
 extern const char *m534;
 extern const char *m540;
 extern const char *m543;
@@ -308,10 +361,11 @@ extern int kill __((pid_t, int));
 extern const char *rfc822atom __((const char *str));
 extern const char *xtext_string __((const char *str));
 
-extern void s_setup __((SmtpState * SS, int fd, FILE * fp));
+extern void s_setup __((SmtpState * SS, int fd));
 extern int s_feof __((SmtpState * SS));
 extern int s_getc __((SmtpState * SS));
 extern int s_hasinput __((SmtpState * SS));
+extern int s_gets __((SmtpState *SS, char *buf, int buflen, int *rcp, char *cop, char *cp));
 
 extern int errno;
 extern int optind;
@@ -329,7 +383,7 @@ extern char *optarg;
 #define	putc	fputc
 #endif				/* lint */
 
-extern int  childsameip __((Usockaddr *addr));
+extern int  childsameip __((Usockaddr *addr, int *childcntp));
 extern void childregister __((int cpid, Usockaddr *addr));
 extern void childreap   __((int cpid));
 
@@ -343,6 +397,17 @@ extern int  smtp_data   __((SmtpState * SS, const char *buf, const char *cp));
 extern int  smtp_bdata  __((SmtpState * SS, const char *buf, const char *cp));
 extern void add_to_toplevels __((char *str));
 
+extern void smtp_auth __((SmtpState * SS, const char *buf, const char *cp));
+
+#ifdef HAVE_OPENSSL
+extern void smtp_starttls __((SmtpState * SS, const char *buf, const char *cp));
+extern void Z_init    __(( void ));
+extern void Z_cleanup __(( SmtpState * ));
+#endif /* - HAVE_OPENSSL */
+extern int  Z_pending __(( SmtpState * ));
+extern int  Z_write   __(( SmtpState *, const void *, int ));
+extern int  Z_read    __(( SmtpState *, void *, int ));
+
 #ifdef HAVE_TCPD_H		/* The hall-mark of having tcp-wrapper things around */
 extern int wantconn __((int sock, char *prgname));
 #endif
@@ -353,3 +418,6 @@ extern char *rfc822date __((time_t *));
 #else
  void report __(());
 #endif
+
+extern int encodebase64string __((const char *instr, int inlen, char *outstr, int outspc));
+extern int decodebase64string __((const char *instr, int inlen, char *outstr, int outspc, const char **inleftover));

@@ -72,7 +72,7 @@ INCLUDEDIR=	@includedir@
 # address verification options they can be specified here.  The default
 # value is "-asve".   This is also used, when invoking  ``sendmail'' with
 # "-bs" option.
-#SMTPOPTIONS= "-a -sve -l ${LOGDIR}/smtpserver"
+#SMTPOPTIONS= "-l ${LOGDIR}/smtpserver"
 SMTPOPTIONS=	@SMTPOPTIONS@
 
 # ALLOWSOURCEROUTE (when present) stops the system from ignoring
@@ -112,11 +112,15 @@ ROUTEROPTIONS= @ROUTEROPTIONS@
 
 # FORCEPUNT is for cases when the local machine under no circumstances
 # is to store any email locally, but send all such to this given address
-#FORCEPUNT=	mailhost
+# (local host is a member on a "cluster" whose message store is at some
+#  other cluster server, and said node handles "local" delivery for all
+#  cluster members... *including* running pipes..)
+#FORCEPUNT=    mailhost
 
 # SMARTHOST is where mail that cannot be resolved or routed is punted to.
-#SMARTHOST=	relay.cs
-
+# There used to be a variable for this, now a better way is to use 'routes'
+# database at which you put line:   .  smtp!smart.host.name
+# (That is: dot, white-space(s), "smtp!smart.host.name" )
 
 # NOBODY is the unprivileged UID value.
 # This is absolutely necessary if setuid() will fail on your "nobody" account
@@ -214,3 +218,19 @@ SYSLOGFLG=RT
 # automagically...
 #
 #ORGDOMAIN=my.local.domain
+
+# Depending, are you running strange private customer account databases
+# hooked (only) into 'mailbox', or not, make sure following is non-empty
+# if you *are* using private databases, as then ZMailer's router won't
+# claim wronly userid to be nonexistent.. These shunted tests look for
+# HOMEDIRECTORY, which might be nonexistent thing at such funny systems...
+# An EMPTY string means "this is NORMAL unix":
+#
+# (A "bug" is that this isn't automatically substituted, but non-void
+#  content gives behaviour that has been around for quite a while...)
+#
+ROUTEUSER_IN_ABNORMAL_UNIX=@ROUTEUSER_IN_ABNORMAL_UNIX@
+
+# Some sites (well, one FUNET site), has LISTSERV, this is for
+# configuring that subpart of the  aliases.cf  scripts:
+#LISTSERV=/v/net/listserv.funet.fi

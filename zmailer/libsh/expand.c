@@ -32,7 +32,7 @@
 
 #include "sh.h"
 #include "flags.h"
-#include "malloc.h"
+#include "zmalloc.h"
 #include "listutils.h"
 #include "io.h"			/* redefines stdio routines */
 #include "shconfig.h"
@@ -101,7 +101,10 @@ pathcmp(ap, bp)
 	register const void **a = (const void **)ap;
 	register const void **b = (const void **)bp;
 
-	return strcmp(*a, *b);
+	/* sort to reverse order, easier to collate
+	   into an object chain */
+
+	return -strcmp(*a, *b);
 }
 
 /* note that | is going to be used instead of / in some pathname examples */
@@ -127,14 +130,14 @@ sglob(ibuf)
 	int *ibuf;	/* unglobbed pathname w/ each byte stored as int */
 {
 	register int i, n;
-	register conscell *d, *tmp;
+	conscell *pp, *cc = NULL;
 	struct sawpath *spp;
-	conscell cc;
 	struct sawpath head;
 	char	*pwd,		/* points to end of current directory in cwd */
 		**base,		/* array of expanded filenames, for sorting */
 		cwd[4096];	/* all pathnames are constructed in cwd */
-	
+	GCVARS1;
+
 	if (BYTE(ibuf[0]) == '/') {
 		cwd[0] = '/';
 		pwd = cwd+1;
@@ -150,25 +153,44 @@ sglob(ibuf)
 	head.next = NULL;
 	spp = &head;
 	if (BYTE(ibuf[0]) != 0)
-		n = glut(cwd, pwd, ibuf, 0, &spp);	/* do expansion */
+	  n = glut(cwd, pwd, ibuf, 0, &spp);	/* do expansion */
 	else
-		return NULL;
+	  goto leave;
+	
 	if (n <= 0)
-		return NULL;
-	base = (char **)tmalloc((sizeof (char *))*n);
+	  goto leave;
+
+#ifdef USE_ALLOCA
+	base = (char **)alloca((sizeof (char *))*n);
+#else
+	base = (char **)malloc((sizeof (char *))*n);
+#endif
 	i = 0;
 	for (spp = head.next; spp != NULL ; spp = spp->next)
 		base[i++] = spp->array;
 	qsort(base, n, sizeof base[0], pathcmp);
 	/* construct a sorted linked list */
-	d = &cc;
+	cc = NULL;
+	GCPRO1(cc);
 	for (i = 0; i < n; ++i) {
-		cdr(d) = conststring(base[i]);
-		d = cdr(d);
+		int slen = strlen(base[i]);
+		pp = newstring(dupnstr(base[i],slen),slen);
+		cdr(pp) = cc;
+		cc = pp;
 		/* printf("saw %s\n", base[i]); */
 	}
-	cdr(d) = NULL;
-	return cdr(&cc);
+	UNGCPRO1;
+#ifndef USE_ALLOCA
+	free(base);
+#endif
+ leave:
+	spp = head.next;
+	while (spp != NULL) {
+	  struct sawpath *spp2 = spp->next;
+	  free(spp);
+	  spp = spp2;
+	}
+	return cc;
 }
 
 /*
@@ -184,7 +206,7 @@ stash(s, len, ps)
 {
 	register struct sawpath *spp;
 	
-	spp = (struct sawpath *)tmalloc(sizeof (struct sawpath) + len);
+	spp = (struct sawpath *)malloc(sizeof (struct sawpath) + len);
 	ps->next = spp;
 	spp->next = NULL;
 	memcpy(spp->array, s, len);
@@ -414,10 +436,10 @@ ok:
  */
 
 int
-squish(d, bufp, ibufp)
-	conscell *d;
+squish(d, bufp, ibufp, doglob)
+	conscell *d; /* input is protected */
 	char **bufp;
-	int **ibufp;
+	int **ibufp, doglob;
 {
 	register char *cp, *bp;
 	register int *ip;
@@ -430,53 +452,64 @@ squish(d, bufp, ibufp)
 	  return -1;
 	/* how much space will unexpanded concatenation of buffers take? */
 	for (l = d, len = 0, sawglob = 0; l != NULL; l = cdr(l)) {
-	  if (l->string == NULL)
+	  int slen = l->slen;
+	  if (l->string == NULL || slen == 0)
 	    continue;
-	  cp = l->string;
-	  if (!sawglob) {
-	    while (*cp != '\0') {
-	      if (globchars[BYTE(*cp)] != 0 &&
-		  !(cp == d->string &&
-		    *cp == '[' && *(d->string+1) == '\0')) {
-		++sawglob;
-		break;
+	  len += slen;
+	  if (doglob) {
+	    /* We do glob processing */
+	    cp = l->string;
+	    if (!sawglob) {
+	      while (slen > 0) {
+		if (globchars[BYTE(*cp)] != 0 &&
+		    !(cp == d->string &&
+		      *cp == '[' && *(d->string+1) == '\0')) {
+		  ++sawglob;
+		  break;
+		}
+		++cp; --slen;
 	      }
-	      ++cp;
 	    }
 	  }
-	  while (*cp != '\0')
-	    ++cp;
-	  len += cp - l->string;
 	}
-	/* allocate something large enough to hold integer per char */
-	*bufp = buf = (char *)tmalloc((len+1)*(sawglob ? sizeof(int) : 1));
-	*ibufp = ibuf = (int *)buf;
 
 	/* f option disables filename generation */
-	sawglob = sawglob && !isset('f');
-	if (!sawglob && cdr(d) == NULL)
+	sawglob = (sawglob != 0); /* zero/one value space */
+	if (doglob > 0) /* doglob == -1 for 'case' matching */
+	  if (isset('f')) sawglob = 0;
+
+	if (!sawglob && cdr(d) == NULL) {
 	  return -1;
+	}
+
+	/* allocate something large enough to hold integer per char */
+	*bufp = buf = (char *)malloc((len+1)*(sawglob ? sizeof(int) : 1));
+	*ibufp = ibuf = (int *)buf;
 
 	for (l = d, bp = buf, ip = ibuf; l != NULL; l = cdr(l)) {
 	  if (l->string) {
 	    if (sawglob) {
+	      int slen = l->slen;
 	      /*
 	       * Create int array with quoted characters
 	       * marked by the QUOTEBYTE bit.
 	       */
 	      mask = ISQUOTED(l) ? QUOTEBYTE : 0;
-	      for (cp = l->string; *cp != '\0'; ++cp) {
+	      for (cp = l->string; slen > 0; --slen,++cp) {
 		if (*cp == '\\' && *(cp+1) != '\0')
 		  *ip++ = BYTE(*++cp) | QUOTEBYTE;
 		else
 		  *ip++ = BYTE(*cp)   | mask;
 	      }
 	    } else if (ISQUOTED(l)) {
-	      for (cp = l->string; *cp != '\0'; ++cp)
-		*bp++ = *cp;
+	      if (l->slen > 0) {
+		memcpy(bp, l->string, l->slen);
+		bp += l->slen;
+	      }
 	    } else {
-	      for (cp = l->string; *cp != '\0'; ++cp) {
-		if (*cp == '\\' && *(cp+1) != '\0')
+	      int slen = l->slen;
+	      for (cp = l->string; slen > 0; ++cp, --slen) {
+		if (*cp == '\\' && slen > 1)
 		  ++cp;
 		*bp++ = *cp;
 	      }
@@ -496,34 +529,64 @@ squish(d, bufp, ibufp)
  * The caller relies on the return value never being NULL.
  */
 
-STATIC conscell * glob __((conscell *));
+STATIC conscell * csglob __((conscell *, int doglob));
 STATIC conscell *
-glob(d)
-	conscell *d;
+csglob(d, doglob)
+	conscell *d; int doglob;
 {
 	register char *bp;
 	register int *ip;
 	conscell *tmp;
-	char *buf;
+	char *buf = NULL;
 	int *ibuf;
+	int s, slen;
 
-	switch (squish(d, &buf, &ibuf)) {
+	s = squish(d, &buf, &ibuf, doglob);
+	switch (s) {
 	case -1:
+		/* if (buf) free(buf); -- no allocations; ever */
 		return d;
 	case 1:
 		tmp = sglob(ibuf);
-		if (tmp != NULL)
-			return tmp;
+		if (tmp != NULL) {
+		  free(buf);
+		  return tmp;
+		}
 		for (bp = buf, ip = ibuf; *ip != '\0'; ++ip)
 			*bp++ = BYTE(*ip);
 		*bp = '\0';
 		/* FALLTHROUGH */
+		/* (re)filled the buffer, can throw away
+		   the conscell chain in 'tmp'. */
 	case 0:
-		return newstring(buf);
+		slen = strlen(buf);
+		tmp = newstring(dupnstr(buf,slen),slen);
+		free(buf);
+		return tmp;
 	}
 	abort();
 	/* NOTREACHED */
 	return 0;
+}
+
+extern conscell *
+sh_glob(avl,il)
+     conscell *avl, *il;
+{
+	il = cdar(avl);
+	if (il == NULL || !STRING(il)) {
+		fprintf(stderr, "Usage: %s glob-patter-string\n",
+				car(avl)->string);
+		return NULL;
+	}
+	/* Always do the glob, never mind if 'set -f' is in effect! */
+	il = csglob(il, -1);
+
+	for (avl = il; avl != NULL; avl = cdr(avl))
+	  if (STRING(avl))
+	    avl->flags |= (QUOTEDSTRING|ELEMENT);
+
+	return il;
 }
 
 
@@ -534,17 +597,39 @@ glob(d)
  * (as defined by IFS) and breaking those apart into multiple argv's,
  * as well as filename globbing of the resulting unquoted strings.
  * The return value is a list of argv's.
+ *
+ * The input array is safe to be munched in place!  No need to copy it!
  */
 
+
 conscell *
-expand(d)
-	register conscell *d;
+expand(d, variant)
+	conscell *d; /* input protected */
+	int variant;
 {
-	register conscell *tmp, *head, *next, *orig;
-	conscell *globbed, **pav;
-	register char *cp;
+	conscell *tmp, *head, *next, *orig;
+	conscell *globbed = NULL, **pav;
+	register char *cp, *cp0;
+	int slen, slen0;
+	GCVARS6;
+
+/* Ok, following is MAGIC - sVariablePush when the
+   data is $(elements ..) produced list */
+
+if (variant == 2 && ISELEMENT(d)) return d;
+
+	tmp = head = next = orig = globbed = NULL;
+	GCPRO6(tmp, head, next, orig, globbed, d);
 
 	/* grindef("EXP = ", d); */
+
+	/* *NOT* copying at first with s_copy_tree -- 13 % of total system
+	   runtime is in THAT call from THIS function! */
+
+#if 0
+	d = s_copy_chain(d); /* Copy the LINEAR CHAIN, not the whole tree! */
+#endif
+
 	orig = d;
 	pav = &globbed;
 	for (head = d; d != NULL; d = next) {
@@ -556,60 +641,101 @@ expand(d)
 		} else if (ISELEMENT(d)) {
 			if (head != d) {
 				cdr(head) = NULL;
-				*pav = glob(head);
-				pav = &cdr(s_last(*pav));
+				head = *pav = csglob(head,1);
+				while (cdr(head) != NULL) head = cdr(head);
+				pav = &cdr(head);
 			}
 			head = NULL;
-			d = copycell(d);
 			d->flags &= ~ELEMENT;
 			*pav = d;
 			pav = &cdr(d);
 			continue;
 		}
 		/* null strings should be retained */
-		/* printf("checking '%s'\n", d->string); */
-		cp = d->string;
+		/* fprintf(stderr,"checking '%s'\n", d->string); */
+		cp0 = cp = d->string;
+		slen0 = slen = d->slen;
 		if (head == d) {
 			/* skip leading whitespace */
-			while (*cp != '\0' && WHITESPACE(*cp))
-				++cp;
-			d->string = cp;
+			while (slen > 0 && WHITESPACE(*cp)) ++cp, --slen;
+			cp0 = cp;
 		}
-		while (*cp != '\0') {
-			if (WHITESPACE(*cp)) {
-				/* can do this because stored data was copied */
-				*cp++ = '\0';
-				cdr(d) = NULL;
-				/* wrap the stuff at head into its own argv */
-				/* printf("wrapped '%s'\n", d->string); */
-				*pav = glob(head);
-				pav = &cdr(s_last(*pav));
-				/* now find the continuation */
-				while (*cp != '\0' && WHITESPACE(*cp))
-					++cp;
-				if (*cp == '\0') {
-					head = NULL;
-					break;
-				} else {
-					head = d = conststring(cp);
-					cdr(head) = next;
-				}
-			}
-			++cp;
+		while (slen > 0) {
+		  if (WHITESPACE(*cp)) {
+		    /* Two possible cases: cp0 == d->string, which means
+		       the stuff is from the beginning of the string, and
+		       playing with d->slen does work.
+		       The second case is when the input string contains
+		       possibly several white space separated substrings:
+		       "aa bb cc", and this is second white-space part, or
+		       latter.. */
+		    if (cp0 == d->string) {
+		      /* Variant first.. */
+		      int s0len = d->slen;
+		      d->slen = (cp - d->string);
+		      ++cp;
+		      d->slen = (slen0 - slen);
+		      --slen;
+		      cdr(d) = NULL;
+		      /* wrap the stuff at head into its own argv */
+		      /* printf("wrapped '%s'\n", d->string); */
+		      tmp = *pav = csglob(head,1);
+		      while (cdr(tmp)) tmp = cdr(tmp);
+		      if (tmp == d) {
+			/* Crap ! That stuff didn't expand */
+			;
+		      } else
+			d->slen = s0len;
+		      pav = & cdr(tmp);
+		    } else {
+		      /* Variant second... */
+		      /* This means also that the previous text bit
+			 IS 'head' -- or can be set as it! */
+		      head = newstring(dupnstr(cp0,cp-cp0),cp-cp0);
+		      cdr(head) = NULL;
+		      tmp = *pav = csglob(head,1);
+		      while (cdr(tmp)) tmp = cdr(tmp);
+		      pav = & cdr(tmp);
+		    }
+
+		    /* now find the continuation */
+		    while (slen > 0 && WHITESPACE(*cp))
+		      ++cp, --slen;
+
+		    if (slen == 0) {
+		      cp0 = d->string; /* mark to ignore this string */
+		      head = NULL;
+		      break;
+		    } else {
+		      /* We have more non-white-space stuff
+			 following */
+		      cp0 = cp;
+		    }
+		  }
+		  ++cp;
+		  --slen;
+		}
+		if (d->string != cp0) {
+		  /* went to the end, and did start in the middle of
+		     the thing */
+		  int sslen = slen0 - (cp0 - d->string);
+		  head = newstring(dupnstr(cp0, sslen), sslen);
 		}
 	}
+
 	if (head != NULL) {
 		/* printf("trailing '%s'\n", head->string); */
 		/* glob is guaranteed to not return NULL */
-		*pav = glob(head);
-		pav = &cdr(s_last(*pav));
+		head = *pav = csglob(head,1);
+		while (cdr(head) != NULL) head = cdr(head);
+		pav = &cdr(head);
 	}
 	*pav = NULL;
-#ifdef CONSCELL_PREV
-	if (orig->prev != globbed->prev) {
-		s_set_prev(orig->prev, globbed);
-		globbed->pflags = orig->pflags;
-	}
-#endif
+
+	UNGCPRO6;
+
+	/* fprintf(stderr, "EXPLEN = %d ",globbed->slen);
+	   grindef("EXPOUT = ", globbed); */
+
 	return globbed;
 }

@@ -15,15 +15,6 @@
 # defined, then the mboxmap mechanism should be used to ensure local delivery
 # for local users.
 
-#
-#  I kept typing in this trace command so frequently, that eventually
-#  I just had to make for it into a single command... /Matti Aarnio
-#
-
-rtrace () {
-	trace all except rfc822 regexp
-}
-
 provide aliases
 
 #
@@ -131,7 +122,7 @@ fi
 # a special error report on them.
 #
 if [ -f $MAILVAR/db/expiredaccts$DBEXTtest ]; then
-       relation -lmt $DBTYPE -f $MAILVAR/db/expiredaccts$DBTEXT expired
+       relation -lmt $DBTYPE -f $MAILVAR/db/expiredaccts$DBEXT expired
 else
        expired () { return 1 }
 fi
@@ -145,13 +136,15 @@ fi
 routeuser (quad, plustail, domain) {
 	local chan user host lcuser mxh al a l
 	local key attr pobox didexpand nattr homedir
-	local plustail2 forward priv hashomedir
+	local plustail2 forward priv hashomedir type
 
 	plustail2=""
 	attr="$(attributes $quad)"
 	chan="$(channel $quad)"
 	
-	case "$(get $attr type)" in
+	type="$(get $attr type)"
+
+	case "$type" in
 	sender)	return (($quad)) ;;
 	esac
 
@@ -218,20 +211,22 @@ routeuser (quad, plustail, domain) {
 	[ -n "$FORCEPUNT" ] &&
 		return $(rrouter "$user@$FORCEPUNT" "$host" $attr "" "")
 
-	ssift "$user" in
+	ssift "$(dequote "$user")" in
 	\\(.*)	user="\1" # Back-quoted username -- most likely
 		didexpand=local
 		;;
-	:include:(.+)
+	':include:[\ \t]*(.+)[\ \t]*'
+		# Weird format to do explicite white-space stripping...
 		db add expansions "$key" file
 		priv=$(get $attr privilege)
 		[ -f "\1" ] &&
 		 priv=$(getpriv "644" $priv "\1" include) &&
 		  nattr=$(newattribute $attr privilege $priv) &&
-		   defer=''
-		return $(listexpand -E "postmaster" -e root -p $priv	\
+		   defer='' &&
+		return $(runas $priv cat "\1" | \
+			 listexpand -E "postmaster" -e root -p $priv	\
 				    -c ":include:\1 file expansion"	\
-				    "$nattr" "\1" "$host" "" "$domain" < "\1")
+				    "$nattr" "\1" "$host" "" "$domain" )
 		;;
 
 #	# This following requires ZM 2.99.46+ shell language!
@@ -315,8 +310,9 @@ routeuser (quad, plustail, domain) {
 #	[ -f "$a" ] &&
 #	    db add expansions "$key" list &&
 #	      priv=$(getpriv "644" $priv "$a" maillist) &&
-#	        return $(listaddresses	-E "$l" -e "$l"	\
-#					-c "$a file expansion" < "$a" |
+#	        return $(runas $priv cat "$a" | \
+#			 listaddresses	-E "$l" -e "$l"	\
+#					-c "$a file expansion" | \
 #		         maprrouter $(newattribute $attr privilege $priv \
 #					sender "$l")			 \
 #				"$a" "$host" "$plustail" "$domain")
@@ -328,9 +324,10 @@ routeuser (quad, plustail, domain) {
 	  db add expansions "$key" list &&
 	    priv=$(getpriv "664" $priv "$a" maillist) &&
 	      nattr=$(newattribute $attr privilege $priv sender "$l") &&
-		return $(listexpand -E "$l" -e "$l" -p $priv		\
+		return $(runas $priv cat "$a" | \
+			 listexpand -E "$l" -e "$l" -p $priv		\
 				    -c "$a file expansion"		\
-				    "$nattr"  "$a" "$host" "" "$domain" < "$a")
+				    "$nattr"  "$a" "$host" "" "$domain" )
 
 	a="$MAILVAR/modlists/$lcuser"
 # /bin/ls -lL "$a"
@@ -342,10 +339,11 @@ routeuser (quad, plustail, domain) {
 		*-mod)
 			l="$preowner$(basename "$lcuser" -mod)$postowner"
 			# echo "$l exists!" >> /dev/tty
-			return $(listaddresses	-E "$l$domain"		\
+			return $(runas $priv cat "$a" | \
+				 listaddresses	-E "$l$domain"		\
 						-e "$l"			\
-						-c "$a file expansion" < "$a" |
-				maprrouter $(newattribute $attr		\
+						-c "$a file expansion" |
+				 maprrouter $(newattribute $attr	\
 					      privilege $priv		\
 					      sender "$l")		\
 					"$a" "$host" "$plustail" "$domain")
@@ -390,7 +388,10 @@ routeuser (quad, plustail, domain) {
 	tfiss
 
 
-if false ; then
+# Define something like following in your  zmailer.conf  file to enable this !
+#	LISTSERV="/v/net/listserv.funet.fi"
+
+if [ -n "$LISTSERV" ] ; then 
 
 # listserv automatic list alias mapping support, the listserv home
 # probably should go to zmailer.conf or elsewhere at some time
@@ -398,7 +399,7 @@ if false ; then
 # We check first zmailer lists that can override listserv in an
 # emergency, for example.
 #
-	LISTSERV="/v/net/listserv.funet.fi"
+
 	a="$LISTSERV/home/$lcuser.list"
   
 	if [ -f "$a" ] ; then
@@ -461,7 +462,7 @@ fi
 
 #	only allow .forward file reading if privs allow it
 
-	hashomedir=0
+	hashomedir=
 	if homedir="$(homedirectory "$user")" ; then
 		hashomedir=1
 	else
@@ -537,9 +538,14 @@ fi
 	    tfiss
 	fi
 
-	forward="$homedir/.forward"
+##	if [ -z "$ROUTEUSER_IN_ABNORMAL_UNIX" ] && [ "$hashomedir" ]; then
+	    forward="$homedir/.forward"
+##	else
+##	    # Clear the possible 'homedir' flag - don't want it here!
+##	    hashomedir=
+##	fi
 
-	case "$(get $attr type)" in
+	case "$type" in
 	expandsender)	[ -f "$forward" ] && return (($quad))
 			;;
 	esac
@@ -550,7 +556,8 @@ fi
 	   [ -f "$forward" ] ; then
 	  db add expansions "$key" user &&
 	    priv=$(getpriv "644" $priv "$forward" .forward) &&
-	      return $(listaddresses -e '"\\'"$user"'"' -c "$forward .forward expansion" < "$forward" | \
+	      return $(runas $priv cat "$forward" | \
+			listaddresses -e '"\\'"$user"'"' -c "$forward .forward expansion" | \
 			 maprrouter $(newattribute $attr privilege $priv) \
 				"$forward" "$host" "$plustail" "$domain")
 	fi
@@ -593,32 +600,44 @@ fi
 		;;
 	esac
 
+#
+#  Problem below is that '$(homedirectory )' function can't quite
+#  be overridden in virtual-ISP mode, where "/etc/passwd" isn't
+#  the real account database...
+#
 
-# Ending case 1: If not POBOX, let local channel handle it
-	case "x$POBOX" in
-	x)	db add expansions "$key" local
-		if [ -z "$localdoesdomain" ]; then
-			domain=""
-		fi
-		quad=($chan "$host" "$user$plustail$domain" $attr)
-		return (($quad))
-		;;
-	esac
 
-# Ending case 2: If not POBOX, nor homedirectory defined, then
-#                fall to "error" case below.
+	if [ -z "$ROUTEUSER_IN_ABNORMAL_UNIX" ] ; then
 
-	case "${hashomedir}x$POBOX" in
-	1x)	db add expansions "$key" local
-		if [ -z "$localdoesdomain" ]; then
-			domain=""
-		fi
-		quad=($chan "$host" "$user$plustail$domain" $attr)
-		return (($quad))
-		;;
-	esac
+# Ending case: If not POBOX, nor homedirectory defined, then
+#              fall to "error" case below.
 
-	return (((error err.nosuchuser "$user$plustail$domain" $attr)))
+		case "${hashomedir}x$POBOX" in
+		1x)	db add expansions "$key" local
+			if [ -z "$localdoesdomain" ]; then
+				domain=""
+			fi
+			quad=($chan "$host" "$user$plustail$domain" $attr)
+			return (($quad))
+			;;
+		esac
+
+	else
+
+# Ending case: If not POBOX, then fall to "error" case below.
+
+		case "x$POBOX" in
+		x)	db add expansions "$key" local
+			if [ -z "$localdoesdomain" ]; then
+				domain=""
+			fi
+			quad=($chan "$host" "$user$plustail$domain" $attr)
+			return (($quad))
+			;;
+		esac
+	fi
+
+	return (((error nosuchuser "$user$plustail$domain" $attr)))
 }
 
 # Usage: getpriv <maxperm> <present privilege> <filename> <filename type>

@@ -20,10 +20,10 @@ SM_LIB=		@LIBRESOLV@ @LIBSOCKET@
 #
 SOURCE=		sm.c
 INCL=		-I$(srcdir)/$(TOPDIR)/include -I$(TOPDIR)/include -I$(TOPDIR)
-CFLAGS=		$(COPTS) $(CPPFLAGS) $(DEFS) $(SM_INCL) $(INCL)
+CFLAGS=		$(COPTS) $(CPPFLAGS) $(DEFS) $(INCL) $(SM_INCL)
 LIBMALLOC=	@LIBMALLOC@
 LIBMALLOCDEB=	$(TOPDIR)/libmalloc/libmalloc_d.a-a
-LIB=		-L$(TOPDIR)/libs -lta -lzc -lz $(LIBMALLOC)
+LIB=		-L$(TOPDIR)/libs -lta -lzc -lzm $(LIBMALLOC)
 LIBDEB=		$(TOPDIR)/libs/libtag
 LINTLIB=	../libta/llib-llibta.ln $(TOPDIR)/libc/llib-llibzc.ln
 
