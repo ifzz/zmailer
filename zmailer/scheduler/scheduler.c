@@ -4,7 +4,7 @@
  */
 /*
  *	Lots of modifications (new guts, more or less..) by
- *	Matti Aarnio <mea@nic.funet.fi>  (copyright) 1992-1998
+ *	Matti Aarnio <mea@nic.funet.fi>  (copyright) 1992-1999
  */
 
 /*
@@ -201,10 +201,10 @@ int sig;
 	    fprintf(stderr,"%s: cannot open statuslog: %s, errno=%d\n", progname, statusfn, errno);
 	    return -1;
 	  }
+	  setvbuf(statuslog, (char *)NULL, _IOLBF, 0);
 #if defined(F_SETFD)
 	  fcntl(FILENO(statuslog), F_SETFD, 1); /* close-on-exec */
 #endif
-	  setvbuf(statuslog, (char *)NULL, _IOLBF, 0);
 	}
 	SIGNAL_HANDLE(SIGHUP, (RETSIGTYPE(*)__((int))) loginitsched);
 	return 0;
@@ -244,8 +244,8 @@ struct ctlfile *cfp;
 	setreuid(0, 0);
 	if (!vfp) return NULL; /* Failure to open */
 
-	fseek(vfp, (off_t)0, SEEK_END);
 	setvbuf(vfp, (char *)NULL, _IOLBF, 0);   /* Set LINEBUFFERING */
+	fseek(vfp, (off_t)0, SEEK_END);
 	return vfp;
 }
 
@@ -274,6 +274,7 @@ struct ctlfile *cfp;
 	if (cfp->head != NULL) {
 	  for (vp = cfp->head; vp != NULL; vp = nvp) {
 	    nvp = vp->next[L_CTLFILE];
+	    MIBMtaEntry->mtaStoredRecipients -= vp->ngroup;
 	    vp->ngroup = 0;
 	    unvertex(vp,-1,1); /* Don't unlink()! Just free()! */
 	  }
@@ -414,11 +415,11 @@ main(argc, argv)
 			  perror("Can't open statistics log file (-l)");
 			  exit(1);
 			}
+			setvbuf(statuslog, (char *)NULL, _IOLBF, 0);
 #if defined(F_SETFD)
 			fcntl(FILENO(statuslog), F_SETFD, 1);
 			/* close-on-exec */
 #endif
-			setvbuf(statuslog, (char *)NULL, _IOLBF, 0);
 			break;
 		case 'H':
 			if (hashlevels < 2)
@@ -612,6 +613,7 @@ main(argc, argv)
 	      eunlink(argv[optind]);
 	  }
 	  doagenda();
+	  killpidfile(pidfile);
 	  exit(0);
 	}
 	mustexit = gotalarm = dumpq = rereadcf = 0;
@@ -742,6 +744,9 @@ main(argc, argv)
 #ifdef	MALLOC_TRACE
 	mal_dumpleaktrace(stderr);
 #endif	/* MALLOC_TRACE */
+
+	killpidfile(pidfile);
+
 	if (mustexit)
 		die(0, "signal");
 	return 0;
@@ -877,6 +882,7 @@ dq_insert(DQ, ino, file, delay)
 	  dq->wrkcount2 += 1;
 	  dq->wrksum    += 1;
 	}
+	++MIBMtaEntry->mtaReceivedMessagesSc;
 	return 0;
 }
 
@@ -1298,6 +1304,8 @@ static struct ctlfile *schedule(fd, file, ino, reread)
 	if (cfp->head == NULL) {
 	  ++global_wrkcnt;
 	  ++MIBMtaEntry->mtaStoredMessages;
+	  MIBMtaEntry->mtaStoredRecipients     += cfp->rcpnts_work;
+	  MIBMtaEntry->mtaReceivedRecipientsSc += cfp->rcpnts_work;
 	  unctlfile(cfp, 0); /* Delete the file.
 				(decrements those counters too!) */
 	  return NULL;
@@ -1314,6 +1322,8 @@ static struct ctlfile *schedule(fd, file, ino, reread)
 	sp_install(cfp->id, (void *)cfp, 0, spt_mesh[L_CTLFILE]);
 	++MIBMtaEntry->mtaStoredMessages;
 	++global_wrkcnt;
+	MIBMtaEntry->mtaStoredRecipients     += cfp->rcpnts_work;
+	MIBMtaEntry->mtaReceivedRecipientsSc += cfp->rcpnts_work;
 	return cfp;
 }
 
@@ -1330,7 +1340,7 @@ slurp(fd, ino)
 	register char *s;
 	register int i;
 	char *contents;
-	long *offset, *ip, *lp;
+	int *offset, *ip, *lp;
 	int offsetspace;
 	struct stat stbuf;
 	struct ctlfile *cfp;
@@ -1376,7 +1386,7 @@ slurp(fd, ino)
 	/* go through the file and mark it off */
 	i = 0;
 	offsetspace = 100;
-	offset = (long*)emalloc(sizeof(long)*offsetspace);
+	offset = (int*)emalloc(sizeof(int)*offsetspace);
 	offset[i++] = 0L;
 	for (s = contents; s - contents < stbuf.st_size; ++s) {
 	  if (*s == '\n') {
@@ -1384,7 +1394,7 @@ slurp(fd, ino)
 	    if (s - contents < stbuf.st_size) {
 	      if (i >= offsetspace-1) {
 		offsetspace += 20;
-		offset = (long*)erealloc(offset,sizeof(long)*offsetspace);
+		offset = (int*)erealloc(offset,sizeof(int)*offsetspace);
 	      }
 	      offset[i++] = s - contents;
 	      if (*s == _CF_MSGHEADERS) {
@@ -1433,13 +1443,14 @@ slurp(fd, ino)
 }
 
 struct offsort {
-	long	offset;
+	int	offset;
 	int	myidx;
-	long	headeroffset;
-	long	drptoffset;
+	int	headeroffset;
+	int	drptoffset;
+	int	delayslot;
+	int	notifyflg;
 	char	*sender;
 	/* char	*dsnrecipient; */
-	int	notifyflg;
 	time_t	wakeup;
 };
 
@@ -1506,7 +1517,7 @@ static struct ctlfile *vtxprep(cfp, file, rereading)
 	const int rereading;
 {
 	register int i, opcnt;
-	register long *lp;
+	register int *lp;
 	int svn;
 	char *cp, *channel, *host, *l_channel, *l_host;
 	char *echannel, *ehost, *l_echannel, *l_ehost, mfpath[100], flagstr[2];
@@ -1596,12 +1607,12 @@ static struct ctlfile *vtxprep(cfp, file, rereading)
 	  }
 	  /* Calculate summary info */
 	  if (cp[-1] == _CF_RECIPIENT) {
-	    cfp->rcpnts_total += 1;
+	    ++cfp->rcpnts_total;
 	    if (*cp == _CFTAG_NOTOK) {
-	      cfp->rcpnts_failed += 1;
+	      ++cfp->rcpnts_failed;
 	      prevrcpt = -1;
-	    } else if (*cp == _CFTAG_OK) {
-	      cfp->rcpnts_work   += 1;
+	    } else if (*cp != _CFTAG_OK) {
+	      ++cfp->rcpnts_work;
 	    }
 	  }
 	  if (*cp == _CFTAG_NORMAL ||
@@ -1640,7 +1651,15 @@ static struct ctlfile *vtxprep(cfp, file, rereading)
 	      if (*cp == ' ' || (*cp >= '0' && *cp <= '9')) {
 		/* New PID locking scheme.. */
 		offarr[opcnt].offset += _CFTAG_RCPTPIDSIZE;
+		cp += _CFTAG_RCPTPIDSIZE;
 	      }
+	      if (*cp == ' ' || (*cp >= '0' && *cp <= '9')) {
+		/* Newer DELAY data slot - _CFTAG_RCPTDELAYSIZE bytes */
+		offarr[opcnt].delayslot = offarr[opcnt].offset;
+		offarr[opcnt].offset += _CFTAG_RCPTDELAYSIZE;
+		cp += _CFTAG_RCPTDELAYSIZE;
+	      } else
+		offarr[opcnt].delayslot = 0;
 	      offarr[opcnt].wakeup = wakeuptime;
 	      offarr[opcnt].myidx = i;
 	      offarr[opcnt].headeroffset = -1;
@@ -1742,10 +1761,6 @@ static struct ctlfile *vtxprep(cfp, file, rereading)
 	}
 	close(cfp->fd);	/* closes the fd opened in schedule() */
 
-	if (is_turnme && cfp->mid == NULL)
-	  unlink(file);
-
-
 	if (fpath[0] >= 'A') {
 	  /* Prefixed with a subdir path */
 	  int hash = 0;
@@ -1820,9 +1835,9 @@ static struct ctlfile *vtxprep(cfp, file, rereading)
 	  else
 	    sprintf(mfpath, "../%s/%s", QUEUEDIR, cfp->mid);
 	}
-	if (cfp->mid == NULL || cfp->logident == NULL
-	    || estat(mfpath, &stbuf) < 0) {
-	  if (cfp->vfpfn != NULL) {
+	if (cfp->mid == NULL || cfp->logident == NULL ||
+	    estat(mfpath, &stbuf) < 0) {
+	  if (!is_turnme && cfp->vfpfn != NULL) {
 	    FILE *vfp = vfp_open(cfp);
 	    if (vfp) {
 	      fprintf(vfp,
@@ -1834,7 +1849,7 @@ static struct ctlfile *vtxprep(cfp, file, rereading)
 	  free(offarr);
 	  return NULL;
 	}
-	cfp->ctime = stbuf.st_mtime; /* instead of ctime, we use mtime
+	cfp->mtime = stbuf.st_mtime; /* instead of ctime, we use mtime
 					at the queue-dir accesses, this
 					way we can move the spool to
 					another machine, and run things
@@ -2121,7 +2136,7 @@ static void vtxdo(vp, cehdr, path)
 
 	/* set default values */
 	if (tp->expiry > 0)
-	  vp->ce_expiry = tp->expiry + vp->cfp->ctime;
+	  vp->ce_expiry = tp->expiry + vp->cfp->mtime;
 	else
 	  vp->ce_expiry = 0;
 
