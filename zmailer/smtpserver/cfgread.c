@@ -4,7 +4,7 @@
  */
 /*
  *    Several extensive changes by Matti Aarnio <mea@nic.funet.fi>
- *      Copyright 1991-1997.
+ *      Copyright 1991-1999.
  */
 
 /*
@@ -18,7 +18,7 @@
 
 static void cfparam __((char *));
 static void cfparam(str)
-char *str;
+     char *str;
 {
     char *name, *param1, *param2;
 
@@ -66,68 +66,159 @@ char *str;
     if (*str != 0)
 	*str++ = 0;
 
-    if (cistrcmp(name, "maxsize") == 0) {
-	sscanf(param1, "%ld", &maxsize);
-	return;
-    }
-    if (cistrcmp(name, "max-error-recipients") == 0) {
-	sscanf(param1, "%d", &MaxErrorRecipients);
-	return;
-    }
+    /* How many parallel clients a servermode smtpserver allows
+       running in parallel, and how many parallel sessions can
+       be coming from same IP address */
+
     if (cistrcmp(name, "same-ip-source-parallel-max") == 0) {
 	sscanf(param1, "%d", &MaxSameIpSource);
-	return;
-    }
-    if (cistrcmp(name, "MaxSameIpSource") == 0) {
+    } else if (cistrcmp(name, "MaxSameIpSource") == 0) {
 	sscanf(param1, "%d", &MaxSameIpSource);
-	return;
-    }
-    if (cistrcmp(name, "ListenQueueSize") == 0) {
+    } else if (cistrcmp(name, "MaxParallelConnections") == 0) {
+	sscanf(param1, "%d", &MaxParallelConnections);
+    } else if (cistrcmp(name, "max-parallel-connections") == 0) {
+	sscanf(param1, "%d", &MaxParallelConnections);
+
+    /* TCP related parameters */
+
+    } else if (cistrcmp(name, "ListenQueueSize") == 0) {
 	sscanf(param1, "%d", &ListenQueueSize);
-	return;
-    }
-    if (cistrcmp(name, "accept-percent-kludge") == 0) {
-	percent_accept = 1;
-	return;
-    }
-    if (cistrcmp(name, "reject-percent-kludge") == 0) {
-	percent_accept = -1;
-	return;
-    }
-    if (cistrcmp(name, "allowsourceroute") == 0) {
-      allow_source_route = 1;
-      return;
-    }
-    /* Following have two parameters:  DBTYPE and DBPATH */
-    if (cistrcmp(name, "policydb") == 0) {
-	policydefine(&policydb, param1, param2);
-	return;
-    }
-    if (cistrcmp(name, "tcprcvbuffersize") == 0) {
+    } else if (cistrcmp(name, "tcprcvbuffersize") == 0) {
 	sscanf(param1, "%d", &TcpRcvBufferSize);
-	return;
-    }
-    if (cistrcmp(name, "tcpxmitbuffersize") == 0) {
+    } else if (cistrcmp(name, "tcpxmitbuffersize") == 0) {
 	sscanf(param1, "%d", &TcpXmitBufferSize);
-	return;
     }
-    if (cistrcmp(name, "debugcmd") == 0) {
+
+    /* SMTP Protocol limit & policy tune options */
+
+    else if (cistrcmp(name, "maxsize") == 0) {
+	sscanf(param1, "%ld", &maxsize);
+    } else if (cistrcmp(name, "min-availspace") == 0) {
+	if (sscanf(param1, "%ld", &minimum_availspace) == 1) {
+	  minimum_availspace *= 1024;
+	  if (minimum_availspace < 1000000)
+	    minimum_availspace = 1000000;
+	}
+    } else if (cistrcmp(name, "RcptLimitCnt") == 0) {
+	sscanf(param1, "%d", &rcptlimitcnt);
+	if (rcptlimitcnt < 100) rcptlimitcnt = 100;
+    } else if (cistrcmp(name, "Rcpt-Limit-Count") == 0) {
+	sscanf(param1, "%d", &rcptlimitcnt);
+	if (rcptlimitcnt < 100) rcptlimitcnt = 100;
+    } else if (cistrcmp(name, "accept-percent-kludge") == 0) {
+	percent_accept = 1;
+    } else if (cistrcmp(name, "reject-percent-kludge") == 0) {
+	percent_accept = -1;
+    } else if (cistrcmp(name, "allowsourceroute") == 0) {
+      allow_source_route = 1;
+    } else if (cistrcmp(name, "max-error-recipients") == 0) {
+	sscanf(param1, "%d", &MaxErrorRecipients);
+    }
+
+    /* Two parameter policydb option: DBTYPE and DBPATH */
+
+    else if (cistrcmp(name, "policydb") == 0) {
+	policydefine(&policydb, param1, param2);
+    }
+
+    /* A few facility enablers: (default: off) */
+
+    else if (cistrcmp(name, "debugcmd") == 0) {
       debugcmdok = 1;
-      return;
-    }
-    if (cistrcmp(name, "expncmd") == 0) {
+    } else if (cistrcmp(name, "expncmd") == 0) {
       expncmdok = 1;
-      return;
-    }
-    if (cistrcmp(name, "vrfycmd") == 0) {
+    } else if (cistrcmp(name, "vrfycmd") == 0) {
       vrfycmdok = 1;
-      return;
+    } else if (cistrcmp(name, "enable-router") == 0) {
+      enable_router = 1;
+    } else if (cistrcmp(name, "smtp-auth") == 0) {
+      auth_ok = 1;
+    } else if (cistrcmp(name, "auth-login-also-without-tls") == 0) {
+      auth_login_without_tls = 1;
     }
+
+    /* Store various things into 'rvcdfrom' header per selectors */
+
+    else if (cistrcmp(name, "rcvd-ident") == 0) {
+      log_rcvd_ident = 1;
+    } else if (cistrcmp(name, "rcvd-whoson") == 0) {
+      log_rcvd_whoson = 1;
+    } else if (cistrcmp(name, "rcvd-auth-user") == 0) {
+      log_rcvd_authuser = 1;
+    } else if (cistrcmp(name, "rcvd-tls-mode") == 0) {
+      log_rcvd_tls_mode = 1;
+    } else if (cistrcmp(name, "rcvd-tls-ccert") == 0) {
+      log_rcvd_tls_ccert = 1;
+    }
+
+    /* Some Enhanced-SMTP facility disablers: (default: on ) */
+
+    else if (cistrcmp(name, "nopipelining") == 0) {
+      pipeliningok = 0;
+    } else if (cistrcmp(name, "noenhancedstatuscodes") == 0) {
+      enhancedstatusok = 0;
+    } else if (cistrcmp(name, "noenhancedstatus") == 0) {
+      enhancedstatusok = 0;
+    } else if (cistrcmp(name, "no8bitmime") == 0) {
+      mime8bitok = 0;
+    } else if (cistrcmp(name, "nochunking") == 0) {
+      chunkingok = 0;
+    } else if (cistrcmp(name, "nodsn") == 0) {
+      dsn_ok = 0;
+    } else if (cistrcmp(name, "noehlo") == 0) {
+      ehlo_ok = 0;
+    } else if (cistrcmp(name, "noetrn") == 0) {
+      etrn_ok = 0;
+    } else if (cistrcmp(name, "no-multiline-replies") == 0) {
+      multilinereplies = 0;
+    }
+
+    /* TLSv1/SSLv* options */
+
+    else if (cistrcmp(name, "use-tls") == 0) {
+      starttls_ok = 1;		/* Default: OFF */
+
+    } else if (cistrcmp(name, "tls-cert-file") == 0 && param1) {
+      if (tls_cert_file) free(tls_cert_file);
+      tls_cert_file = strdup(param1);
+      if (!tls_key_file)	/* default the other */
+	tls_key_file = strdup(param1);
+
+    } else if (cistrcmp(name, "tls-key-file")  == 0 && param1) {
+      if (tls_key_file) free(tls_key_file);
+      tls_key_file = strdup(param1);
+      if (!tls_cert_file)	/* default the other */
+	tls_cert_file = strdup(param1);
+
+    } else if (cistrcmp(name, "tls-CAfile")    == 0 && param1) {
+      if (tls_CAfile) free(tls_CAfile);
+      tls_CAfile = strdup(param1);
+
+    } else if (cistrcmp(name, "tls-CApath")    == 0 && param1) {
+      if (tls_CApath) free(tls_CApath);
+      tls_CApath = strdup(param1);
+
+    } else if (cistrcmp(name, "tls-loglevel")  == 0 && param1) {
+      sscanf(param1,"%d", & tls_loglevel);
+
+    } else if (cistrcmp(name, "tls-enforce-tls")==0 && param1) {
+      sscanf(param1,"%d", & tls_enforce_tls);
+
+    } else if (cistrcmp(name, "tls-ccert-vd")  == 0 && param1) {
+      sscanf(param1,"%d", & tls_ccert_vd);
+
+    } else if (cistrcmp(name, "tls-ask-cert")  == 0 && param1) {
+      sscanf(param1,"%d", & tls_ask_cert);
+
+    } else if (cistrcmp(name, "tls-require-cert")  == 0 && param1) {
+      sscanf(param1,"%d", & tls_req_cert);
+    }
+    /* XX: report error for unrecognized PARAM keyword ?? */
 }
 
 struct smtpconf *
- readcffile(name)
-const char *name;
+readcffile(name)
+     const char *name;
 {
     FILE *fp;
     struct smtpconf scf, *head, *tail = NULL;
@@ -149,17 +240,19 @@ const char *name;
 	}
 	buf[sizeof(buf) - 1] = 0;	/* Trunc, just in case.. */
 
-	if (strncmp(buf, "PARAM", 5) == 0) {
-	    cfparam(buf);
+	cp = buf;
+	SKIPWHILE(isspace, cp);
+	if (strncmp(cp, "PARAM", 5) == 0) {
+	    cfparam(cp);
 	    continue;
 	}
 	scf.flags = "";
 	scf.next = NULL;
-	cp = buf;
+	s0 = cp;
 	SKIPWHILE(!isspace, cp);
 	c = *cp;
 	*cp = '\0';
-	s0 = s = strdup(buf);
+	s0 = strdup(s0);
 	for (s = s0; *s; ++s)
 	    if (isascii(*s & 0xFF) && isupper(*s & 0xFF))
 		*s = tolower(*s & 0xFF);
@@ -193,8 +286,8 @@ const char *name;
 }
 
 struct smtpconf *
- findcf(h)
-const char *h;
+findcf(h)
+     const char *h;
 {
     struct smtpconf *scfp;
     register char *cp, *s;

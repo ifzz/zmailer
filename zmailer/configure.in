@@ -32,8 +32,6 @@ AC_INIT(router/router.c)
 AC_CONFIG_HEADER(config.h)
 AC_LANG_C
 
-AC_DEFINE_UNQUOTED(CONFIGURE_CMD,"$0 $ac_configure_args")
-
 #----------------------------------------------------------------------------
 #       Check if we should use gcc if available on this machine.
 #----------------------------------------------------------------------------
@@ -65,8 +63,6 @@ defSMTPOPTIONS='-a -sve -l ${LOGDIR}/smtpserver'
 defSCHEDULEROPTIONS='-l ${LOGDIR}/scheduler.perflog -S -H'
 defNNTPSERVER='nntp'
 ac_default_zmconfig="${ZCONFIG-/etc/zmailer.conf}"
-
-AC_CONFIG_HEADER(config.h)
 
 if test "x$prefix" = "xNONE" ; then
   AC_MSG_RESULT([!!!])
@@ -114,6 +110,11 @@ AC_MSG_RESULT([** Using C compiler: $CC])
 AC_MSG_RESULT([** Using CFLAGS:     $CFLAGS])
 AC_MSG_RESULT([** Using CPPDEP:     $CPPDEP])
 
+dnl AC_DEFINE_UNQUOTED(CONFIGURE_CMD,"$0 $ac_configure_args")
+AC_DEFINE_UNQUOTED(CONFIGURE_CMD,
+		   "CC='$CC' CFLAGS='$CFLAGS' $0 $ac_configure_args")
+
+
 AC_PROG_INSTALL
 AC_PROG_RANLIB
 AC_PATH_PROG(AR, ar, ar)dnl
@@ -130,6 +131,23 @@ AC_CHECK_SIZEOF(short)
 AC_CHECK_SIZEOF(int)
 AC_CHECK_SIZEOF(long)
 AC_CHECK_SIZEOF(double)
+
+AC_SUBST(GENINCL)
+AC_ARG_WITH(generic-include, [  --with-generic-include=\"-I/...\"
+                            Include option for local overriders],
+	use_genincl=1, use_genincl=0)
+if test "$use_genincl" = 1; then
+  GENINCL="$withval"
+  CPPFLAGS="$CPPFLAGS $withval"
+fi
+AC_SUBST(GENLIB)
+AC_ARG_WITH(generic-library, [  --with-generic-library=\"-L/...\"
+                            Library directory option for local overriders],
+	use_genlib=1, use_genlib=0)
+if test "$use_genlib" = 1; then
+  GENLIB="$withval"
+  LIBS="$LIBS $GENLIB"
+fi
 
 AC_SUBST(ZMAILERCFGFILE)
 use_zcfg=0
@@ -637,36 +655,36 @@ if test "$ac_cv_header_db_185_h" = yes ; then
   t_found_at="nowhere"
   if test "$ac_cv_lib_c_dbopen" = yes ; then
     LIBDB=""
-    t_found_at="libc"
+    t_found_at="libc(1)"
     DBTYPE="btree"
   else
-    if test "$ac_cv_lib_db_dbopen" = yes ; then
-      LIBDB="-ldb"
-      t_found_at="db library"
+    if test "$ac_cv_lib_db1_dbopen" = yes ; then
+      LIBDB="-ldb1"
+      t_found_at="db1 library"
       DBTYPE="btree"
     else
       AC_TRY_LINK([], [dbopen();], ac_cv_lib_c_dbopen=yes,
 				   ac_cv_lib_c_dbopen=no)
       if test "$ac_cv_lib_c_dbopen" = no; then
-	if test "x$ac_cv_lib_db_dbopen" = x; then # not set
+	if test "x$ac_cv_lib_db1_dbopen" = x; then # not set
 	  t_oldLibs="$LIBS"
-	  LIBS="$LIBS -ldb"
-	  AC_TRY_LINK([], [dbopen();],	ac_cv_lib_db_dbopen=yes,
-					ac_cv_lib_db_dbopen=no)
-	  if test "$ac_cv_lib_db_dbopen" = yes; then
-	    LIBDB="-ldb"
-	    t_found_at="db library"
+	  LIBS="$LIBS -ldb1"
+	  AC_TRY_LINK([], [dbopen();],	ac_cv_lib_db1_dbopen=yes,
+					ac_cv_lib_db1_dbopen=no)
+	  if test "$ac_cv_lib_db1_dbopen" = yes; then
+	    LIBDB="-ldb1"
+	    t_found_at="db1 library"
 	    DBTYPE="btree"
 	  else
 	    AC_MSG_RESULT([Has <db_185.h>, but dbopen() is not at libc, nor at libdb ??])
 	  fi
 	  LIBS="$t_oldLibs"
 	else
-	  AC_MSG_ERROR([config.cache inconsistency! (db) Delete it, and redo!])
+	  AC_MSG_ERROR([config.cache inconsistency! (db1) Delete it, and redo!])
 	fi
       else # Has it in the libc!
 	LIBDB=""
-	t_found_at="libc"
+	t_found_at="libc(2)"
 	DBTYPE="btree"
       fi
     fi
@@ -684,11 +702,17 @@ if test "$ac_cv_header_db_185_h" = yes ; then
   fi
 fi
 
+dnl Possible backwards compability library is detected above, but we believe
+dnl that following code can be *still* able to locate  dbopen()  from another
+dnl library which contains call API (ABI?) compatible interface, however which
+dnl does not necessarily contain binary compatible DATABASE which would use
+dnl same binary layout as old BSD DB 1.85 version did...
+
 if test "$ac_cv_header_db_h" = yes ; then
   t_found_at="nowhere"
   if test "$ac_cv_lib_c_dbopen" = yes ; then
     LIBDB=""
-    t_found_at="libc"
+    t_found_at="libc(3)"
     DBTYPE="btree"
   else
     if test "$ac_cv_lib_db_dbopen" = yes ; then
@@ -717,12 +741,81 @@ if test "$ac_cv_header_db_h" = yes ; then
 	fi
       else # Has it in the libc!
 	LIBDB=""
-	t_found_at="libc"
+	t_found_at="libc(4)"
 	DBTYPE="btree"
       fi
     fi
   fi
   AC_MSG_RESULT([Located BSD DB  dbopen()  routine at $t_found_at])
+  if test "x$LIBDB" != "x" -a "x$LIBDB" = "x$LIBNDBM" ; then
+	# Well, both at the same library ( -ldb ), which propably
+	# means that  <ndbm.h>  is just an emulation mode at BSD DB.
+	LIBNDBM=""
+    AC_MSG_RESULT([Note: It looks like your NDBM is actually BSD DB compability wrapper at])
+    AC_MSG_RESULT([      libdb -library. If so, your NDBM databases are actually BSD DB_HASH ones..])
+  fi
+  if test "$t_found_at" != nowhere; then
+    dblocation="$dblocation;$t_found_at"
+  fi
+fi
+
+dnl
+dnl Ok, a third case; SleepyCat's BSD DB 2.*;  db_open() et.al.
+dnl
+
+if test "$ac_cv_header_db_h" = yes ; then
+  t_found_at="nowhere"
+  if test "$ac_cv_lib_c_db_open" = yes ; then
+    LIBDB=""
+    t_found_at="libc(3)"
+    DBTYPE="btree"
+    AC_DEFINE(HAVE_DB_OPEN2)
+  else
+    if test "$ac_cv_lib_db_db_open" = yes ; then
+      LIBDB="-ldb"
+      t_found_at="db library"
+      DBTYPE="btree"
+      AC_DEFINE(HAVE_DB_OPEN2)
+    else
+      AC_TRY_LINK([], [db_open();], ac_cv_lib_c_db_open=yes,
+				   ac_cv_lib_c_db_open=no)
+      if test "$ac_cv_lib_c_db_open" = no; then
+	if test "x$ac_cv_lib_db_db_open" = x; then # not set
+	  t_oldLibs="$LIBS"
+	  LIBS="$LIBS -ldb"
+	  AC_TRY_LINK([], [db_open();],	ac_cv_lib_db_db_open=yes,
+					ac_cv_lib_db_db_open=no)
+	  if test "$ac_cv_lib_db_db_open" = yes; then
+	    LIBDB="-ldb"
+	    t_found_at="db library"
+	    DBTYPE="btree"
+	    AC_DEFINE(HAVE_DB_OPEN2)
+	  else
+	    AC_MSG_RESULT([Has <db.h>, but db_open() is not at libc, nor at libdb ??])
+	  fi
+	  LIBS="$t_oldLibs"
+	else
+	  AC_MSG_ERROR([config.cache inconsistency! (db) Delete it, and redo!])
+	fi
+      else # Has it in the libc!
+	LIBDB=""
+	t_found_at="libc(4)"
+	DBTYPE="btree"
+	AC_DEFINE(HAVE_DB_OPEN2)
+      fi
+    fi
+  fi
+  AC_MSG_RESULT([Located BSD DB 2.x  db_open()  routine at $t_found_at])
+  if test "x$LIBDB" != "x" ; then
+	# Does (db->cursor)(...) have 3 or 4 args ?
+	AC_TRY_COMPILE([#include <db.h>],[DB *db; DBC *curs;
+int err = (db->cursor)(db, NULL, &curs, 0);],
+			ac_cv_db_cursor_4=yes, ac_cv_db_cursor_4=no)
+	if test "x$ac_cv_db_cursor_4" = "xyes"; then
+	  AC_MSG_RESULT([  (db->cursor)() method function seems to want 4 args.])
+	  AC_DEFINE(HAVE_DB_CURSOR4)
+	fi
+  fi
   if test "x$LIBDB" != "x" -a "x$LIBDB" = "x$LIBNDBM" ; then
 	# Well, both at the same library ( -ldb ), which propably
 	# means that  <ndbm.h>  is just an emulation mode at BSD DB.
@@ -772,24 +865,29 @@ fi
 
 # Lets build a nice single substitute variable
 AC_SUBST(LIBDBMS)
+AC_SUBST(LIBLOCALDBMS)
 # GDBM must be last as if we have LIBDB at the system instead of real
 # LIBNDBM, we still have ndbm routines, but want to use (likely)
 # ones from LIBDB instead of LIBGDBM...
 sep=""
 if test "x$LIBNDBM" != "x" ; then
   LIBDBMS="$LIBDBMS$sep$LIBNDBM"
+  LIBLOCALDBMS="$LIBLOCALDBMS$sep$LIBNDBM"
   sep=" "
 fi
 if test "x$LIBSDBM" != "x" ; then
   LIBDBMS="$LIBDBMS$sep$LIBSDBM"
+  LIBLOCALDBMS="$LIBLOCALDBMS$sep$LIBSDBM"
   sep=" "
 fi
 if test "x$LIBDB" != "x" ; then
   LIBDBMS="$LIBDBMS$sep$LIBDB"
+  LIBLOCALDBMS="$LIBLOCALDBMS$sep$LIBDB"
   sep=" "
 fi
 if test "x$LIBGDBM" != "x" ; then
   LIBDBMS="$LIBDBMS$sep$LIBGDBM"
+  LIBLOCALDBMS="$LIBLOCALDBMS$sep$LIBGDBM"
   sep=" "
 fi
 if test "x$LIBLDAP" != "x" ; then
@@ -846,6 +944,9 @@ if test "$ac_cv_header_netinet_in_h" = no ; then
   AC_MSG_RESULT([%%% AIEEE!  NO  <netinet/in.h>  HEADER ?!])
 fi
 
+AC_TRY_COMPILE([#include <sys/socket.h>],[socklen_t sl = 2;],
+	AC_DEFINE(HAVE_SOCKLEN_T))
+
 AC_ARG_WITH(ipv6,[  --with-ipv6              Have IPv6 in system, and want to use it],
 	AC_DEFINE(INET6)
 	ac_with_ipv6=yes
@@ -857,8 +958,9 @@ if test "$ac_with_ipv6" = yes; then
 		[int af = AF_INET6;],
 		ac_cv_af_inet6=yes, ac_cv_af_inet6=no)
     if test "$ac_cv_af_inet6" = yes; then
-	AC_TRY_LINK([#include <sys/socket.h>
-		     #include <netinet/in.h>],
+	AC_TRY_LINK([#include <sys/types.h>
+#include <sys/socket.h>
+#include <netinet/in.h>],
 		    [/* Has AF_INET6, but does one have all related things ? */
 		     struct in6_addr sin6;],
 		    ac_cv_struct_in6_addr=yes, ac_cv_struct_in6_addr=no)
@@ -916,7 +1018,7 @@ fi
 
 AC_FUNC_SVR4_MAILLOCK
 
-AC_CHECK_FUNCS(mkdir mktime rename rmdir strcpy strdup strstr \
+AC_CHECK_FUNCS(mkdir mktime mkstemp rename rmdir strcpy strdup strstr \
 		strchr strrchr setvbuf strerror strsignal setreuid \
 		setregid sigprocmask sigpending sigsuspend)
 # If the system does not have the following (library) calls,
@@ -937,7 +1039,7 @@ AC_TRY_LINK([extern char *sys_siglist[]; static char *s;], [s = sys_siglist[2]; 
 AC_CHECK_FUNCS(index rindex)
 # more tests..
 AC_CHECK_FUNCS(endgrent fchdir ftime getcwd getgroups setgroups \
-		getmntinfo gettimeofday isascii memcpy mkfifo   \
+		getmntinfo gettimeofday isascii memcpy memchr mkfifo   \
 		getpgrp setsid seteuid setuid)
 AC_CHECK_FUNCS(setrlimit fchown utimes utime sysconf fpathconf)
 # Networking stuff is in deep trouble, if sockets are not found..
@@ -1027,12 +1129,14 @@ if test "x$LIBRESOLV" = "x"; then
   LIBS="$LIBS $LIBSOCKET"
   ac_cv_var__res_options=no
   # This following is for IRIX6.4, and I sincerely hope it
-  # will not fail on other systems...
-  AC_TRY_LINK([
+  # will not fail on other systems...  It did! It did!
+  # Many systems don't have idemponent headers, they need specific
+  # includes before latter ones, or the latter ones won't be successful...
+  AC_TRY_LINK([#include <sys/types.h>
+#include <sys/socket.h>
 #include <netinet/in.h>
 #include <arpa/nameser.h>
-#include <resolv.h>
-],
+#include <resolv.h>],
 	      [_res.options = RES_INIT;],
 		ac_cv_var__res_options=yes);
   if test "$ac_cv_var__res_options" != "yes"; then
@@ -1165,8 +1269,13 @@ if test "$use_tcpwrappers" = 0 ; then
 	LIBS="$LIBS $LIBSOCKET $LIBWRAP"
 	CPPFLAGS="$CPPFLAGS $INCLWRAP"
 	AC_CACHE_VAL(ac_cv_lib_tcpwrap,
-	  [AC_TRY_LINK([#include <tcpd.h>
-			int deny_severity, allow_severity;],[hosts_access();],
+	  [AC_TRY_LINK([#include <stdio.h>
+#include <sys/types.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <tcpd.h>
+struct request_info request;
+int deny_severity, allow_severity;],[hosts_access(&request);],
 			ac_cv_lib_tcpwrap=yes,ac_cv_lib_tcpwrap=no)
 	  ])
 	if test "$ac_cv_lib_tcpwrap" = yes; then
@@ -1194,6 +1303,15 @@ AC_SUBST(PRIVATEMBOX)
 PRIVATEMBOX=""
 AC_ARG_WITH(privatembox,   [  --with-privatembox       Use 'private/' in a part of mailbox compilations],
 	PRIVATEMBOX="private/")
+
+AC_ARG_WITH(mboxquotacheck,[  --with-mboxquotacheck    Use 'CHECK_MB_SIZE' define in mailbox program.
+                           Linking is presumed to use  --with-generic-lib=DIR],
+	AC_DEFINE(CHECK_MB_SIZE))
+
+AC_SUBST(PRIVATEAUTH)
+PRIVATEAUTH=""
+AC_ARG_WITH(privateauth,   [  --with-privateauth       Use 'private/' in a part of smtpserver compilations],
+	PRIVATEAUTH="private/")
 
 AC_SUBST(LIBWHOSON)
 AC_SUBST(INCLWHOSON)
@@ -1415,13 +1533,96 @@ if test "$use_getpwnam_lib" = 1; then
   GETPWLIB="$withval"
 fi
 
-AC_SUBST(GENINCL)
-AC_ARG_WITH(generic-include, [  --with-generic-include=\"-I/...\"
-                            Include option for local overriders],
-	use_genincl=1, use_genincl=0)
-if test "$use_genincl" = 1; then
-  GENINCL="$withval"
+AC_SUBST(OPENSSLPREFIX)
+AC_SUBST(OPENSSLINCL)
+AC_SUBST(OPENSSLLIB)
+
+AC_ARG_WITH(openssl-prefix, [  --with-openssl-prefix=/dir/path (defines both include and lib)],
+	OPENSSLPREFIX="$withval")
+AC_ARG_WITH(openssl-include, [  --with-openssl-include=/dir/incl/path],
+	OPENSSLINCL="-I$withval")
+AC_ARG_WITH(openssl-lib, [  --with-openssl-lib=/dir/lib/path],
+	[if test -f "$withval/libssl.so" ; then
+	  OPENSSLLIB="$withval/libssl.so $withval/libcrypto.so"
+	else
+	  OPENSSLLIB="$withval/libssl.a $withval/libcrypto.a"
+	fi
+#	if test "$withval" != "/usr" -a "$withval" != "/usr/lib"; then
+#	  # Operating system dependent runtime path definition :-/
+#	  OPENSSLLIB="-R$withval $OPENSSLLIB"
+#	fi
+])
+if test -n "$OPENSSLPREFIX" -a -z "$OPENSSLINCL" ; then
+  if test -f "$OPENSSLPREFIX/include/openssl/ssl.h" ; then
+    OPENSSLINCL="-I$OPENSSLPREFIX/include/"
+  else
+    AC_MSG_RESULT([!!! You defined  --with-openssl-prefix=$OPENSSLPREFIX,  BUT])
+    AC_MSG_RESULT([!!! there does not exist file  $OPENSSLPREFIX/include/openssl/ssl.h !])
+  fi
 fi
+if test -n "$OPENSSLPREFIX" -a -z "$OPENSSLLIB" ; then
+  if test -n "$OPENSSLPREFIX" -a -f "$OPENSSLPREFIX/lib/libssl.so" ; then
+    OPENSSLLIB="$OPENSSLPREFIX/lib/libssl.so $OPENSSLPREFIX/lib/libcrypto.so"
+#   if test "$withval" != "/usr" -a "$withval" != "/usr/lib"; then
+#	# Operating system dependent runtime path definition :-/
+#	OPENSSLLIB="-R$withval $OPENSSLLIB"
+#   fi
+  elif test -n "$OPENSSLPREFIX" -a -f "$OPENSSLPREFIX/lib/libssl.a" ; then
+    OPENSSLLIB="$OPENSSLPREFIX/lib/libssl.a $OPENSSLPREFIX/lib/libcrypto.a"
+  else
+    AC_MSG_RESULT([!!! You defined  --with-openssl-prefix=$OPENSSLPREFIX,  BUT])
+    AC_MSG_RESULT([!!! there does not exist file  $OPENSSLPREFIX/lib/libssl.a !])
+  fi
+fi
+if test -n "$OPENSSLINCL" -a -n "$OPENSSLLIB" ; then
+  AC_DEFINE(HAVE_OPENSSL)
+fi
+
+if test -z "$OPENSSLINCL" ; then
+  # No Explicite setup, lets do some auto-tests
+  if test -f /usr/local/ssl/include/openssl/ssl.h ; then
+    # Gee, OpenSSL 0.9.3a at default prefix!
+    AC_DEFINE(HAVE_OPENSSL)
+    OPENSSLPREFIX="/usr/local/ssl"
+    OPENSSLINCL="-I$OPENSSLPREFIX/include"
+    if test -f "$OPENSSLPREFIX/lib/libssl.so" ; then
+      OPENSSLLIB="$OPENSSLPREFIX/lib/libssl.so $OPENSSLPREFIX/lib/libcrypto.so"
+    else
+      OPENSSLLIB="$OPENSSLPREFIX/lib/libssl.a $OPENSSLPREFIX/lib/libcrypto.a"
+    fi
+    AC_MSG_RESULT([You have OpenSSL version 0.9.3a (or newer) at default location])
+  fi
+  if test -f /usr/include/openssl/ssl.h ; then
+    # Gee, OpenSSL 0.9.3a at  "--prefix=/usr" !!!
+    AC_DEFINE(HAVE_OPENSSL)
+    OPENSSLPREFIX="/usr"
+    OPENSSLINCL=""
+    if test -f "$OPENSSLPREFIX/lib/libssl.so" ; then
+      OPENSSLLIB="$OPENSSLPREFIX/lib/libssl.so $OPENSSLPREFIX/lib/libcrypto.so"
+    else
+      OPENSSLLIB="$OPENSSLPREFIX/lib/libssl.a $OPENSSLPREFIX/lib/libcrypto.a"
+    fi
+    AC_MSG_RESULT([You have OpenSSL version 0.9.3a (or newer) at system root!])
+  fi
+fi
+
+
+AC_CHECK_FUNCS(crypt)
+
+if test "$ac_cv_func_crypt" != yes ; then
+    # Now why ???  Must have "-lcrypt" like Linuxes ???
+    t_oldLibs="$LIBS"
+    LIBS="$LIBS -lcrypt"
+    AC_TRY_LINK([], [char *s1, *s2, *s3; s3 = crypt(s1,s2);],
+		ac_cv_lib_crypt_lib=yes,ac_cv_lib_crypt_lib=no)
+    if test "$ac_cv_lib_crypt_lib" = yes; then
+	# Success with this flag..
+	GETPWLIB="$GETPWLIB -lcrypt"
+	AC_MSG_RESULT([crypt() was found by using -lcrypt  library!])
+    fi
+    LIBS="$t_oldLibs"
+fi
+
 
 
 AC_STRUCT_DIRENT_D_INO
