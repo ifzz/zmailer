@@ -20,6 +20,7 @@ struct policystate {		/* Part of SmtpState structure */
     int relaycustnet;
     int rcpt_nocheck;
     int sender_norelay;
+    char *authuser;
 
     /* This variable contains bitmapped flags of attributes to be checked. */
     /* For example: P_A_REJECTSOURCE ( == 3)
@@ -28,7 +29,7 @@ struct policystate {		/* Part of SmtpState structure */
     int request;
     int origrequest;
     /* Attribute values are stored here. */
-    char values[P_A_LastAttr+1];
+    char * values[P_A_LastAttr+1];
 
     /* The lattest result message (line) */
     char *message;
@@ -43,15 +44,17 @@ struct policystate {		/* Part of SmtpState structure */
 };
 
 
-#ifdef _POLICYTEST_INTERNAL_
-
+#ifndef __Usockaddr__  /* Match the same one in  smtpserver.h */
 typedef union {
     struct sockaddr_in v4;
 #ifdef INET6
     struct sockaddr_in6 v6;
 #endif
 } Usockaddr;
+#define __Usockaddr__
+#endif
 
+#ifdef _POLICYTEST_INTERNAL_
 
 typedef enum {
     _dbt_none, _dbt_btree, _dbt_bhash, _dbt_ndbm, _dbt_gdbm
@@ -104,7 +107,7 @@ typedef enum {
 
 extern void policydefine __((struct policytest ** relp, const char *dbtype, const char *dbpath));
 extern int policyinit __((struct policytest ** relp, struct policystate * ps, int whoson_result));
-extern int policytest __((struct policytest * rel, struct policystate * ps, PolicyTest how, const char *str, const int len));
+extern int policytest __((struct policytest * rel, struct policystate * ps, PolicyTest how, const char *str, const int len, const char *authuser));
 extern int policytestaddr __((struct policytest * rel, struct policystate * ps, PolicyTest how, Usockaddr * raddr));
 extern char *policymsg __((struct policytest *rel, struct policystate *ps));
 extern long  policyinsizelimit __((struct policytest *rel, struct policystate *ps));
@@ -114,9 +117,7 @@ extern struct policytest *policydb;
 /* contentpolicy.c */
 extern int contentpolicy __((struct policytest *rel, struct policystate *ps, const char *fname));
 
-#ifdef _POLICYTEST_INTERNAL_
 extern int mx_client_verify  __((int, const char *, int));
 extern int sender_dns_verify __((int, const char *, int));
 extern int client_dns_verify __((int, const char *, int));
-extern int rbl_dns_test __((u_char *, char **));
-#endif
+extern int rbl_dns_test __((const int, const u_char *, char *, char **));

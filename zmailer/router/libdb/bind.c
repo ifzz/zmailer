@@ -323,11 +323,12 @@ getmxrr(host, localhost, ttlp, depth)
 	CUC *eom, *cp;
 	querybuf buf, answer;
 	int n, qlen, nmx, i, ancount, qdcount, maxpref;
-	conscell *lhead, *l, *tmp;
+	conscell *lhead, *l;
 	struct mxdata mx[20];
 	char hbuf[MAXNAME], realname[MAXNAME];
 	int type;
 	time_t ttl, maxttl;
+	GCVARS1;
 
 	if (depth > 4) {
 	  fprintf(stderr,
@@ -445,7 +446,7 @@ getmxrr(host, localhost, ttlp, depth)
 		if (n < 0)
 			break;
 		cp += n;
-		mx[nmx].host = (char *)strsave((char*)hbuf);
+		mx[nmx].host = (char *)strdup((char*)hbuf);
 		if (localhost != NULL && CISTREQ(hbuf, localhost))
 		    if ((maxpref < 0) || (maxpref > (int)mx[nmx].pref))
 			maxpref = mx[nmx].pref;
@@ -481,7 +482,10 @@ getmxrr(host, localhost, ttlp, depth)
 	/* determine how many are left, and their max ttl */
 	n = 0;
 	lhead = l = NULL;
+	GCPRO1(lhead);
 	for (i = 0; i < nmx; ++i) {
+		int slen;
+		char *s;
 		if (mx[i].host == NULL)
 			continue;
 		++n; /* found one! */
@@ -490,20 +494,28 @@ getmxrr(host, localhost, ttlp, depth)
 		if (D_bind || _res.options & RES_DEBUG)
 			fprintf(stderr, "search_res: %s: mx[%d] = %s\n",
 				host, n, mx[i].host);
+		slen = strlen(mx[i].host);
+		s = dupnstr(mx[i].host, slen);
 		if (lhead == NULL)
-			lhead = l = newstring(mx[i].host);
+			lhead = l = newstring(s,slen);
 		else {
-			cdr(l) = newstring(mx[i].host);
+			cdr(l) = newstring(s,slen);
 			l = cdr(l);
 		}
+		if (mx[i].host) free(mx[i].host);
+		mx[i].host = NULL;
 	}
+	if (lhead)
+		lhead = ncons(lhead);
+	UNGCPRO1;
+
 	if (D_bind || _res.options & RES_DEBUG)
 		fprintf(stderr, "search_res: %s: %d valid MX RR's\n", host, n);
 	if (n == 0) /* MX's exist, but their WKS's show no TCP smtp service */
 		return NULL;
 	else if (maxttl > 0)
 		*ttlp = maxttl;
-	return ncons(lhead);
+	return lhead;
 }
 
 static conscell *
@@ -552,7 +564,7 @@ getrrtypec(host, rrtype, ttlp, depth)
 	time_t *ttlp;
 	int depth;
 {
-	conscell *lhead, *l, *tmp;
+	conscell *lhead, *l;
 	char *s;
 	HEADER *hp;
 	CUC *eom, *cp, *nextcp;
@@ -562,6 +574,7 @@ getrrtypec(host, rrtype, ttlp, depth)
 	int type;
 	char nbuf[BUFSIZ];
 	char hb[MAXNAME];
+	GCVARS1;
 
 	if (depth > 4) {
 		fprintf(stderr,
@@ -606,6 +619,7 @@ getrrtypec(host, rrtype, ttlp, depth)
 	 * We don't care about errors here, only if we got an answer
 	 */
 	if (ancount == 0) {
+		int slen; char *s;
 		if (D_bind || _res.options & RES_DEBUG)
 			fprintf(stderr,
 				"search_res: rcode=%s, ancount=%d, rrtype=%d\n",
@@ -618,13 +632,20 @@ getrrtypec(host, rrtype, ttlp, depth)
 		      if (hb[0] == '\0') {
 			hb[0] = '.'; hb[1] = '\0';
 		      }
-		      return newstring(strsave(hb));
+		      slen = strlen(hb);
+		      s = dupnstr(hb, slen);
+		      return newstring(s, slen);
 		    }
 		  }
-		  return newstring(strsave(host));
+		  slen = strlen(host);
+		  s = dupnstr(host, slen);
+		  return newstring(s, slen);
 		}
-		if (rrtype == T_WKS) /* absence of WKS means YES ... */
-			return newstring(strsave(host));
+		if (rrtype == T_WKS) { /* absence of WKS means YES ... */
+		  slen = strlen(host);
+		  s = dupnstr(host, slen);
+		  return newstring(s, slen);
+		}
 		return NULL;
 	}
 	cp = (CUC *)&answer + sizeof(HEADER);
@@ -638,7 +659,9 @@ getrrtypec(host, rrtype, ttlp, depth)
 	ok = rrtype != T_WKS;
 	maxttl = 0;
 	l = NULL;
-	for (lhead = NULL; --ancount >= 0 && cp < eom; cp = nextcp) {
+	lhead = NULL;
+	GCPRO1(lhead);
+	for (; --ancount >= 0 && cp < eom; cp = nextcp) {
 		n = dn_expand((CUC*)&answer, (CUC*)eom, (CUC*)cp,
 			      (void*)nbuf, sizeof(nbuf));
 		if (n < 0)
@@ -685,8 +708,14 @@ getrrtypec(host, rrtype, ttlp, depth)
 
 			*ttlp = maxttl;
 			n = (*cp) & 0xFF;
-			if (0 < n && n < (int)sizeof(hb))
-			  return newstring(strnsave((const char *)cp+1, n));
+			if (0 < n && n < (int)sizeof(hb)) {
+			  int slen; char *s;
+			  UNGCPRO1;
+			  *(char*)(cp+1+n) = 0;
+			  slen = strlen(cp+1);
+			  s = dupnstr(cp+1, slen);
+			  return newstring(s, slen);
+			}
 			break;
 
 		case T_WKS:
@@ -704,8 +733,11 @@ getrrtypec(host, rrtype, ttlp, depth)
 			if (*cp++ == IPPROTO_TCP) {	/* check protocol */
 			  if (cp + (IPPORT_SMTP/8) < nextcp &&
 			      *(cp+(IPPORT_SMTP/8)) & (0x80>>IPPORT_SMTP%8)) {
+			    int slen = strlen(hb);
+			    char *s = dupnstr(hb, slen);
 			    *ttlp = maxttl;
-			    return newstring(strsave(hb));
+			    UNGCPRO1;
+			    return newstring(s, slen);
 			  }
 			}
 			continue;
@@ -714,10 +746,14 @@ getrrtypec(host, rrtype, ttlp, depth)
 		case T_AAAA:
 			*ttlp = maxttl;
 			if (rrtype == T_ANY) {
-			  return newstring(strsave(host));
+			  int slen = strlen(host);
+			  char *s = dupnstr(host, slen);
+			  UNGCPRO1;
+			  return newstring(s, slen);
 			} else {
 			  char tb[80];
 			  const char *ss;
+			  int slen;
 
 #if defined(AF_INET6) && defined(INET6)
 			  if (type == T_AAAA)
@@ -725,11 +761,12 @@ getrrtypec(host, rrtype, ttlp, depth)
 			  else
 #endif
 			    ss = inet_ntop(AF_INET, cp, tb, sizeof(tb));
-			  s = strsave(ss);
+			  slen = strlen(ss);
+			  s = dupnstr(ss, slen);
 			  if (lhead == NULL)
-			    lhead = l = newstring(s);
+			    lhead = l = newstring(s, slen);
 			  else {
-			    cdr(l) = newstring(s);
+			    cdr(l) = newstring(s, slen);
 			    l = cdr(l);
 			  }
 			}
@@ -765,7 +802,12 @@ getrrtypec(host, rrtype, ttlp, depth)
 				/* chase it down */
 				getrrtypec(nbuf, rrtype, ttlp, depth+1);
 			*ttlp = maxttl;
-			return newstring(strsave(nbuf));
+			UNGCPRO1;
+			{
+			  int slen = strlen(nbuf);
+			  char *s = dupnstr(nbuf, slen);
+			  return newstring(s, slen);
+			}
 
 		case T_SOA:
 		case T_NS:
@@ -784,7 +826,10 @@ getrrtypec(host, rrtype, ttlp, depth)
 
 		case T_MX:
 			if (rrtype == T_ANY) {
-			    return newstring(strsave(host));
+			  int slen = strlen(host);
+			  char *s = dupnstr(host, slen);
+			  UNGCPRO1;
+			  return newstring(s, slen);
 			}
 		default:
 			fprintf(stderr,"search_res: getrrtypec: non-processed RR type for host='%s' query=%d, result=%d\n",host,rrtype,type);
@@ -793,11 +838,16 @@ getrrtypec(host, rrtype, ttlp, depth)
 		}
 	}
 	if (lhead)
-		return ncons(lhead);
+		lhead = ncons(lhead);
+	UNGCPRO1;
+	if (lhead)
+		return lhead;
 	if (ok) {
 		const char *cs = first ? host : hb;
+		int slen = strlen(cs);
+		char *s = dupnstr(cs, slen);
 		*ttlp = maxttl;
-		return newstring(strsave(cs));
+		return newstring(s, slen);
 	}
 	return NULL;
 }

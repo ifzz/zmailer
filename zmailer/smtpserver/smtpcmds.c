@@ -4,7 +4,7 @@
  */
 /*
  *    Several extensive changes by Matti Aarnio <mea@nic.funet.fi>
- *      Copyright 1991-1998.
+ *      Copyright 1991-1999.
  */
 /*
  * Zmailer SMTP-server divided into bits
@@ -164,7 +164,8 @@ const char *buf, *cp;
       while (*cp == ' ' || *cp == '\t') ++cp;
 
     SS->policyresult = policytest(policydb, &SS->policystate,
-				  POLICY_HELONAME, cp, strlen(cp));
+				  POLICY_HELONAME, cp, strlen(cp),
+				  SS->authuser);
     if (logfp) {
       char *s = policymsg(policydb, &SS->policystate);
       if (SS->policyresult != 0 || s != NULL) {
@@ -190,9 +191,7 @@ const char *buf, *cp;
      * We need it for proper handling of ESMTP anyway
      */
     if (checkhelo && skeptical && partridge(SS, cp)) {
-	type821err(SS, -501, "", buf,
-		   "Invalid `%.200s' parameter!",
-		   buf);
+	type821err(SS, -501, "", buf, "Invalid `%.200s' parameter!", buf);
 	if (msg != NULL)
 	  type(SS, -501, "", "%s", msg);
 	type(SS, 501, "", "Err: %s", rfc821_error);
@@ -269,6 +268,8 @@ const char *buf, *cp;
 	char sizebuf[20];
 	long policyinlimit = policyinsizelimit(policydb, &SS->policystate);
 	long maxinlimit = maxsize;
+	int multiline = multilinereplies;
+	multilinereplies = 1;
 
 	if (policyinlimit >= 0)  /* defined if non-negative value */
 	  maxinlimit = policyinlimit;
@@ -281,22 +282,36 @@ const char *buf, *cp;
 						     in force, else:
 						     The FIXED maximum */
 	type(SS, -250, NULL, sizebuf);
-	type(SS, -250, NULL, "8BITMIME");
-	type(SS, -250, NULL, "PIPELINING");
-	type(SS, -250, NULL, "CHUNKING");	/* RFC 1830: BDAT */
-	type(SS, -250, NULL, "ENHANCEDSTATUSCODES");
+	if (mime8bitok)
+	  type(SS, -250, NULL, "8BITMIME");
+	if (pipeliningok)
+	  type(SS, -250, NULL, "PIPELINING");
+	if (chunkingok)
+	  type(SS, -250, NULL, "CHUNKING");	/* RFC 1830: BDAT */
+	if (enhancedstatusok)
+	  type(SS, -250, NULL, "ENHANCEDSTATUSCODES");
 	if (expncmdok && STYLE(SS->cfinfo, 'e'))
 	  type(SS, -250, NULL, "EXPN");
 	if (vrfycmdok && STYLE(SS->cfinfo, 'v'))
 	  type(SS, -250, NULL, "VRFY");
-	type(SS, -250, NULL, "DSN");
-#if 1 /* This causes problems for the router, will fix router
+	if (dsn_ok)
+	  type(SS, -250, NULL, "DSN");
+
+#if 1 /* This may cause problems for the router, will fix router
 	 performance first, then enable this again.. */
-	type(SS, -250, NULL, "X-RCPTLIMIT 10000");	/* VERY HIGH figure, normal is 100 */
+
+	if (rcptlimitcnt > 100)
+	  type(SS, -250, NULL, "X-RCPTLIMIT %d", rcptlimitcnt);
 #endif
-	type(SS, -250, NULL, "ETRN");
+
+	if (auth_ok)
+	  type(SS, -250, NULL, "AUTH=LOGIN"); /* RFC 2554, NetScape/
+						 Sun Solstice/M$ Exchange */
+	if (etrn_ok)
+	  type(SS, -250, NULL, "ETRN");
 	type(SS, 250, NULL, "HELP");
 	SS->with_protocol = WITH_ESMTP;
+	multilinereplies = multiline;
     }
     SS->state = MailOrHello;
 }
@@ -306,20 +321,22 @@ SmtpState *SS;
 const char *buf, *cp;
 int insecure;
 {
-    const char *s;
+    const char *s, *p;
     int rc;
     const char *drpt_envid;
     const char *drpt_ret;
     const char *bodytype = NULL;
     const char *newcp = NULL;
     const char *srcrtestatus = "";
-    int addrlen, drptret_len, drptenvid_len;
+    const char *auth_param;
+    int addrlen, drptret_len, drptenvid_len, authparam_len;
     int strict = STYLE(SS->cfinfo, 'R');
     int sloppy = STYLE(SS->cfinfo, 'S');
 
     addrlen = 0;
     drptret_len = 0;
     drptenvid_len = 0;
+    authparam_len = 0;
 
     SS->sender_ok = 0;		/* Set it, when we are sure.. */
 
@@ -431,7 +448,8 @@ int insecure;
     SS->sizeoptval = -1;
     SS->sizeoptsum = -1;
     drpt_envid = NULL;
-    drpt_ret = NULL;
+    drpt_ret   = NULL;
+    auth_param = NULL;
     rc = 0;
     while (*s) {
 	while (*s == ' ' || (sloppy && *s == '\t')) {
@@ -439,7 +457,7 @@ int insecure;
 	    if (strict_protocol) break;
 	    if (strict && !sloppy) break;
 	}
-	if (CISTREQN("RET=", s, 4)) {
+	if (dsn_ok && CISTREQN("RET=", s, 4)) {
 	    if (drpt_ret) {
 		type(SS, 501, m554, "RET-param double defined!");
 		return;
@@ -456,7 +474,7 @@ int insecure;
 	    drptret_len = (s - drpt_ret);
 	    continue;
 	}
-	if (CISTREQN("BODY=", s, 5)) {
+	if (mime8bitok && CISTREQN("BODY=", s, 5)) {
 	    /* Actually we do not use this data... */
 	    s += 5;
 	    if (bodytype != NULL) {
@@ -505,30 +523,52 @@ int insecure;
 	    }
 	    continue;
 	}
-	/* IETF-NOTARY  SMTP-DRPT extensions */
-	if (CISTREQN("ENVID=", s, 6)) {
+	/* IETF-NOTARY  SMTP-DSN extensions */
+	if (dsn_ok && CISTREQN("ENVID=", s, 6)) {
 	    if (drpt_envid != NULL) {
 		type(SS, 501, m554, "ENVID double definition!");
 		rc = 1;
 		break;
 	    }
 	    drpt_envid = s + 6;
-	    s = xtext_string(s + 6);
-	    if (s == s + 6) {
+	    p = xtext_string(s + 6);
+	    if (p == (s + 6)) {
 		type821err(SS, -501, m554, buf, "Invalid ENVID value '%.200s'", drpt_envid);
 		type(SS, 501, m554, "ENVID data contains illegal characters!");
 		rc = 1;
 		break;
 	    }
+	    s = p;
 	    drptenvid_len = s - drpt_envid;
-	    s++;
-	    if (*drpt_envid == 0) {
+	    ++s;
+	    if (drptenvid_len == 0) {
 		type(SS, 501, m554, "ENVID= without data!");
 		rc = 1;
 		break;
 	    }
 	    continue;
 	}
+	if (auth_ok && CISTREQN("AUTH=", s, 5)) {
+	    /* RFC 2554 AUTH extension */
+	    auth_param = s + 5;
+	    p = xtext_string(s + 5);
+	    if (p == (s + 5)) {
+		type821err(SS, -501, m554, buf, "Invalid AUTH value '%.200s'", auth_param);
+		type(SS, 501, m554, "AUTH data contains illegal characters!");
+		rc = 1;
+		break;
+	    }
+	    s = p;
+	    authparam_len = s - auth_param;
+	    ++s;
+	    if (authparam_len == 0) {
+		type(SS, 501, m554, "AUTH= without data!");
+		rc = 1;
+		break;
+	    }
+	    continue;
+	}
+
 	type(SS, 501, m554, "Unknown MAIL FROM:<> parameter: %s", s);
 	rc = 1;
 	break;
@@ -541,7 +581,8 @@ int insecure;
     RFC821_822QUOTE(cp, newcp, addrlen);
 
     SS->policyresult = policytest(policydb, &SS->policystate,
-				  POLICY_MAILFROM, cp, addrlen);
+				  POLICY_MAILFROM, cp, addrlen,
+				  SS->authuser);
     if (logfp) {
       char *ss = policymsg(policydb, &SS->policystate);
       if (SS->policyresult != 0 || ss != NULL) {
@@ -558,20 +599,32 @@ int insecure;
 	type(SS, 453, m471, "%s", ss);
       } else if (SS->policyresult < -99) {
 	if (SS->policyresult < -103) { /* -104 */
-	  type(SS, -453, m443, "Policy analysis reports temporary DNS error");
-	  type(SS, -453, m443, "with your source domain.  Retrying may help,");
-	  type(SS, -453, m443, "or if the condition persists, you may need");
-	  type(SS,  453, m443, "to get somebody to fix your DNS servers.");
+	  if (!multilinereplies) {
+	    type(SS,453,m443, "Policy analysis reports temporary DNS error with your source domain.");
+	  } else {
+	    type(SS, -453, m443, "Policy analysis reports temporary DNS error");
+	    type(SS, -453, m443, "with your source domain.  Retrying may help,");
+	    type(SS, -453, m443, "or if the condition persists, you may need");
+	    type(SS,  453, m443, "to get somebody to fix your DNS servers.");
+	  }
 	} else if (SS->policyresult < -100) {
-	  type(SS, -453, m443, "Policy analysis reports DNS error with your");
-	  type(SS, -453, m443, "source domain.   Please correct your source");
-	  type(SS,  453, m443, "address and/or the info at the DNS.");
+	  if (!multilinereplies) {
+	    type(SS,453,m443, "Policy analysis reports DNS error with your source domain.");
+	  } else {
+	    type(SS, -453, m443, "Policy analysis reports DNS error with your");
+	    type(SS, -453, m443, "source domain.   Please correct your source");
+	    type(SS,  453, m443, "address and/or the info at the DNS.");
+	  }
 	} else {
-	  type(SS, -453, m471, "Access denied by the policy analysis functions.");
-	  type(SS, -453, m471, "This may be due to your source IP address,");
-	  type(SS, -453, m471, "the IP reversal domain, the data you gave for");
-	  type(SS, -453, m471, "the HELO/EHLO parameter, or address/domain you");
-	  type(SS,  453, m471, "gave at the MAIL FROM:<...> address.");
+	  if (!multilinereplies) {
+	    type(SS,453,m471, "Access denied by the policy analysis functions.");
+	  } else {
+	    type(SS, -453, m471, "Access denied by the policy analysis functions.");
+	    type(SS, -453, m471, "This may be due to your source IP address,");
+	    type(SS, -453, m471, "the IP reversal domain, the data you gave for");
+	    type(SS, -453, m471, "the HELO/EHLO parameter, or address/domain you");
+	    type(SS,  453, m471, "gave at the MAIL FROM:<...> address.");
+	  }
 	}
       } else {
 	char *ss = policymsg(policydb, &SS->policystate);
@@ -579,16 +632,23 @@ int insecure;
 	  type(SS,-553, m571, "Policy analysis reported:");
 	  type(SS, 553, m571, "%s", ss);
 	} else if (SS->policyresult < -1) {
-	  type(SS, -553, m543, "Policy analysis reports DNS error with your");
-	  type(SS, -553, m543, "source domain.   Please correct your source");
-	  type(SS,  553, m543, "address and/or the info at the DNS.");
+	  if (!multilinereplies) {
+	    type(SS,553,m543,"Policy analysis reports DNS error with your source domain.");
+	  } else {
+	    type(SS, -553, m543, "Policy analysis reports DNS error with your");
+	    type(SS, -553, m543, "source domain.   Please correct your source");
+	    type(SS,  553, m543, "address and/or the info at the DNS.");
+	  }
 	} else {
-	  type(SS, -553, m571, "Access denied by the policy analysis functions.");
-	  type(SS, -553, m571, "This may be due to your source IP address,");
-	  type(SS, -553, m571, "the IP reversal domain, the data you gave for");
-	  type(SS, -553, m571, "the HELO/EHLO parameter, or address/domain you");
-	  type(SS,  553, m571, "gave at the MAIL FROM:<...> address.");
-
+	  if (!multilinereplies) {
+	    type(SS,553,m571,"Access denied by the policy analysis functions.");
+	  } else {
+	    type(SS, -553, m571, "Access denied by the policy analysis functions.");
+	    type(SS, -553, m571, "This may be due to your source IP address,");
+	    type(SS, -553, m571, "the IP reversal domain, the data you gave for");
+	    type(SS, -553, m571, "the HELO/EHLO parameter, or address/domain you");
+	    type(SS,  553, m571, "gave at the MAIL FROM:<...> address.");
+	  }
 	}
       }
       if (newcp)
@@ -694,12 +754,11 @@ int insecure;
 	mail_abort(SS->mfp);
 	SS->mfp = NULL;
     } else if (SS->sizeoptval > maxsize && maxsize > 0) {
-	type(SS, -552, "5.3.4", "This message is larger, than our maximum acceptable");
-	type(SS,  552, "5.3.4", "incoming message size of  %d  chars.", maxsize);
+	type(SS, 552, m534, "This message is larger, than our maximum acceptable incoming message size of  %d  chars.", maxsize);
 	mail_abort(SS->mfp);
 	SS->mfp = NULL;
     } else if (SS->sizeoptval > availspace) {
-	type(SS, 452, "4.3.1", "Try again later, insufficient storage available at the moment");
+	type(SS, 452, m431, "Try again later, insufficient storage available at the moment");
 	mail_abort(SS->mfp);
 	SS->mfp = NULL;
     } else {
@@ -738,11 +797,15 @@ const char *buf, *cp;
        tell the spammers exactly what's happening. */
     if ( (SS->state == MailOrHello || SS->state == Mail) &&
 	 policydb != NULL && SS->policyresult < 0 ) {
-      type(SS, -553, m571, "Access denied by the policy analysis functions.");
-      type(SS, -553, m571, "This may be due to your source IP address,");
-      type(SS, -553, m571, "the IP reversal domain, the data you gave for");
-      type(SS, -553, m571, "the HELO/EHLO parameter, or address/domain");
-      type(SS,  553, m571, "you gave at the MAIL FROM:<...> address.");
+      if (!multilinereplies)
+	type(SS, 553, m571, "Access denied by the policy analysis functions.");
+      else {
+	type(SS, -553, m571, "Access denied by the policy analysis functions.");
+	type(SS, -553, m571, "This may be due to your source IP address,");
+	type(SS, -553, m571, "the IP reversal domain, the data you gave for");
+	type(SS, -553, m571, "the HELO/EHLO parameter, or address/domain");
+	type(SS,  553, m571, "you gave at the MAIL FROM:<...> address.");
+      }
       return;
     }
 
@@ -868,8 +931,8 @@ const char *buf, *cp;
 	    if (strict_protocol) break;
 	    if (strict && !sloppy) break;
 	}
-	/* IETF-NOTARY  SMTP-RCPT-DRPT extensions */
-	if (CISTREQN("NOTIFY=", s, 7)) {
+	/* IETF-NOTARY  SMTP-DSN extensions */
+	if (dsn_ok && CISTREQN("NOTIFY=", s, 7)) {
 	    if (drpt_notify) {
 		type(SS, 501, m554, "NOTIFY-param double defined!");
 		return;
@@ -896,7 +959,7 @@ const char *buf, *cp;
 	    notifylen = s - drpt_notify;
 	    continue;
 	}
-	if (CISTREQN("ORCPT=", s, 6)) {
+	if (dsn_ok && CISTREQN("ORCPT=", s, 6)) {
 	    if (drpt_orcpt) {
 		type(SS, 501, m554, "ORCPT-param double defined!");
 		return;
@@ -911,15 +974,20 @@ const char *buf, *cp;
 	    orcptlen = s - drpt_orcpt;
 	    continue;
 	}
-	type(SS, 555, "Unknown RCPT TO:<> parameter: %s", s);
+	type(SS, 555, m554, "Unknown RCPT TO:<> parameter: %s", s);
 	return;
     }
 
+    if (SS->rcpt_count >= rcptlimitcnt) {
+      type(SS, 452, "4.5.2", "Too many recipients in one go!");
+      return;
+    }
 
     RFC821_822QUOTE(cp, newcp, addrlen);
 
     SS->policyresult = policytest(policydb, &SS->policystate,
-				  POLICY_RCPTTO, cp, addrlen);
+				  POLICY_RCPTTO, cp, addrlen,
+				  SS->authuser);
     if (logfp) {
       char *ss = policymsg(policydb, &SS->policystate);
       if (SS->policyresult != 0 || ss != NULL) {
@@ -937,7 +1005,8 @@ const char *buf, *cp;
 	else
 	  if (policydb != NULL && SS->policyresult > -100) {
 	    int rc = policytest(policydb, &SS->policystate,
-				POLICY_RCPTPOSTMASTER, cp, addrlen);
+				POLICY_RCPTPOSTMASTER, cp, addrlen,
+				SS->authuser);
 	    if (rc == 0)
 	      SS->policyresult = 0;
 
@@ -964,24 +1033,36 @@ const char *buf, *cp;
 	    type(SS,-453, m471, "Policy analysis reported:");
 	    type(SS, 453, m471, "%s", ss);
 	  } else if (SS->policyresult < -103) { /* -104 */
-	    type(SS, -453, m443, "Policy analysis reports temporary DNS error");
-	    type(SS, -453, m443, "with this target domain. Retrying may help,");
-	    type(SS, -453, m443, "or if the condition persists, some further");
-	    type(SS, -453, m443, "work may be in need with the target domain");
-	    type(SS,  453, m443, "DNS servers.");
+	    if (!multilinereplies)
+	      type(SS, 453, m443, "Policy analysis reports temporary DNS error with the target domain.");
+	    else {
+	      type(SS, -453, m443, "Policy analysis reports temporary DNS error");
+	      type(SS, -453, m443, "with this target domain. Retrying may help,");
+	      type(SS, -453, m443, "or if the condition persists, some further");
+	      type(SS, -453, m443, "work may be in need with the target domain");
+	      type(SS,  453, m443, "DNS servers.");
+	    }
 
 	  } else if (SS->policyresult < -102) {
 	    /* Code: -103 */
-	    type(SS,-453, m471, "This target address is not our MX service");
-	    type(SS,-453, m471, "client, nor you are connecting from address");
-	    type(SS,-453, m471, "that is allowed to openly use us to relay");
-	    type(SS,-453, m471, "to any arbitary address thru us.");
-	    type(SS, 453, m471, "We don't accept this recipient.");
+	    if (!multilinereplies) {
+	      type(SS,453, m471, "This target address is not our MX service client.");
+	    } else {
+	      type(SS,-453, m471, "This target address is not our MX service");
+	      type(SS,-453, m471, "client, nor you are connecting from address");
+	      type(SS,-453, m471, "that is allowed to openly use us to relay");
+	      type(SS,-453, m471, "to any arbitary address thru us.");
+	      type(SS, 453, m471, "We don't accept this recipient.");
+	    }
 	  } else if (SS->policyresult < -100) {
 	    /* Code: -102 */
-	    type(SS,-453, m443, "Policy analysis found DNS error on");
-	    type(SS,-453, m443, "the target address. This address is");
-	    type(SS, 453, m443, "not currently acceptable.");
+	    if (!multilinereplies)
+	      type(SS, 453, m443, "Policy analysis found DNS error on the target address");
+	    else {
+	      type(SS,-453, m443, "Policy analysis found DNS error on");
+	      type(SS,-453, m443, "the target address. This address is");
+	      type(SS, 453, m443, "not currently acceptable.");
+	    }
 	  } else {
 	    type(SS, 453, m443, "Policy rejection on the target address");
 	  }
@@ -991,17 +1072,25 @@ const char *buf, *cp;
 	    type(SS, 553, m571, "%s", s);
 	  } else if (SS->policyresult < -2) {
 	    /* Code: -3 */
-	    type(SS,-553, m571, "This target address is not our MX service");
-	    type(SS,-553, m571, "client, nor you are connecting from address");
-	    type(SS,-553, m571, "that is allowed to openly use us to relay");
-	    type(SS,-553, m571, "to any arbitary address thru us.");
-	    type(SS, 553, m571, "We don't accept this recipient.");
+	    if (!multilinereplies)
+	      type(SS,553,m571, "This target address is not our MX service client.");
+	    else {
+	      type(SS,-553, m571, "This target address is not our MX service");
+	      type(SS,-553, m571, "client, nor you are connecting from address");
+	      type(SS,-553, m571, "that is allowed to openly use us to relay");
+	      type(SS,-553, m571, "to any arbitary address thru us.");
+	      type(SS, 553, m571, "We don't accept this recipient.");
+	    }
 
 	  } else if (SS->policyresult < -1) {
 	    /* Code: -2 */
-	    type(SS,-553, m543, "Policy analysis found DNS error on");
-	    type(SS,-553, m543, "the target address. This address is");
-	    type(SS, 553, m543, "not currently acceptable.");
+	    if (!multilinereplies) {
+	      type(SS,553,m543, "Policy analysis found DNS error on the target domain.");
+	    } else {
+	      type(SS,-553, m543, "Policy analysis found DNS error on");
+	      type(SS,-553, m543, "the target address. This address is");
+	      type(SS, 553, m543, "not currently acceptable.");
+	    }
 	  } else {
 	    type(SS, 553, m571, "Policy rejection on the target address");
 	  }

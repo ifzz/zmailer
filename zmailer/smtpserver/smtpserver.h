@@ -50,6 +50,7 @@
 #include <varargs.h>		/* If no  <stdarg.h>,  then presume <varargs.h> ... */
 #endif
 
+#include <netinet/in.h> /* In some systems needed before <arpa/inet.h> */
 #include <arpa/inet.h>
 
 #include "mail.h"
@@ -78,12 +79,14 @@ extern int wait();
 #include <netinet/in.h>
 #ifdef HAVE_NETINET_IN6_H
 #include <netinet/in6.h>
-#endif
+#else
 #ifdef HAVE_NETINET6_IN6_H
 #include <netinet6/in6.h>
-#endif
+#else
 #ifdef HAVE_LINUX_IN6_H
 #include <linux/in6.h>
+#endif
+#endif
 #endif
 
 #include "libc.h"
@@ -125,7 +128,7 @@ typedef enum {
     RecipientOrData, Data, Send, SendOrMail,
     SendAndMail, Reset, Verify, Expand, Help,
     NoOp, Quit, Turn, Tick, Verbose, DebugIdent,
-    Turnme, BData, DebugMode,
+    Turnme, BData, DebugMode, Auth,
     Hello2, Mail2, Send2, Verify2	/* 8-bit extensions */
 } Command;
 
@@ -169,6 +172,7 @@ typedef struct {
     /* For BDAT -command */
     int  bdata_blocknum;
     int  mvbstate;
+    char *authuser;
 
     char ident_username[MAXHOSTNAMELEN + MAXHOSTNAMELEN + 2];
     char helobuf[SMTPLINESIZE];
@@ -199,13 +203,25 @@ extern int TcpRcvBufferSize;
 extern int TcpXmitBufferSize;
 extern int ListenQueueSize;
 extern int MaxSameIpSource;
+extern int MaxParallelConnections;
 extern int percent_accept;
 extern int smtp_syslog;
 extern int allow_source_route;
 extern int debugcmdok;
 extern int expncmdok;
 extern int vrfycmdok;
+extern int pipeliningok;
+extern int mime8bitok;
+extern int chunkingok;
+extern int enhancedstatusok;
+extern int multilinereplies;
+extern int dsn_ok;
+extern int auth_ok;
+extern int ehlo_ok;
+extern int etrn_ok;
 extern int strict_protocol;
+extern int rcptlimitcnt;
+extern int enable_router;
 
 extern const char *progname;
 extern int debug, skeptical, checkhelo, ident_flag, verbose;
@@ -312,6 +328,7 @@ extern void s_setup __((SmtpState * SS, int fd, FILE * fp));
 extern int s_feof __((SmtpState * SS));
 extern int s_getc __((SmtpState * SS));
 extern int s_hasinput __((SmtpState * SS));
+extern int s_gets __((SmtpState *SS, char *buf, int buflen, int *rcp, char *cop, char *cp));
 
 extern int errno;
 extern int optind;
@@ -329,7 +346,7 @@ extern char *optarg;
 #define	putc	fputc
 #endif				/* lint */
 
-extern int  childsameip __((Usockaddr *addr));
+extern int  childsameip __((Usockaddr *addr, int *childcntp));
 extern void childregister __((int cpid, Usockaddr *addr));
 extern void childreap   __((int cpid));
 
@@ -343,6 +360,8 @@ extern int  smtp_data   __((SmtpState * SS, const char *buf, const char *cp));
 extern int  smtp_bdata  __((SmtpState * SS, const char *buf, const char *cp));
 extern void add_to_toplevels __((char *str));
 
+extern void smtp_auth __((SmtpState * SS, const char *buf, const char *cp));
+
 #ifdef HAVE_TCPD_H		/* The hall-mark of having tcp-wrapper things around */
 extern int wantconn __((int sock, char *prgname));
 #endif
@@ -353,3 +372,6 @@ extern char *rfc822date __((time_t *));
 #else
  void report __(());
 #endif
+
+extern int encodebase64string __((const char *instr, int inlen, char *outstr, int outspc));
+extern int decodebase64string __((const char *instr, int inlen, char *outstr, int outspc, const char **inleftover));

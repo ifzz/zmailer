@@ -1,3 +1,356 @@
+1999-04-26  Matti Aarnio  <mea@mea.tmt.tele.fi>
+
+	* Makefile.in:
+	    Version 2.99.50-s16
+
+	* proto/cf/fqdnaliases.cf:
+	    Typo: Missing ending ']' at a '[' test clause.
+
+	* smtpserver/policytest.c:
+	    Policytest should accept everything when running in non-network
+	    interactive mode.  (Ok, Syntax issues aside..)
+
+	* smtpserver/smtprouter.c, smtpserver/cfgread.c,
+	  smtpserver/smtpserver.h, smtpserver/smtpserver.c,
+	  proto/smtpserver.conf.in:
+	    Supply "PARAM enable-router" parameter to control the availability
+	    of interactive router subsystem.  Also strengthened the way how
+	    the user input is passed to the interactive router so that it
+	    should not allow bad inputs to cause escape into shell at any
+	    moment..  However this isn't the only place where the danger may
+	    lurk, so per default the "enable-router" is OFF.
+
+1999-04-25  Matti Aarnio  <mea@mea.tmt.tele.fi>
+
+	* smtpserver/smtpcmds.c, smtpserver/smtpserver.c,smtpserver/smtpdata.c:
+	    Change the 'multilinereplies' processing around "a bit".
+	    Have sensible reports even when single-line mode is used.
+
+	* proto/smtpserver.conf.in, man/smtpserver.8, smtpserver/cfgread.c,
+	  smtpserver/smtpserver.h, smtpserver/smtpdata.c,
+	  smtpserver/smtpserver.c, smtpserver/smtpauth.c,
+	  smtpserver/Makefile.in, smtpserver/smtpcmds.c,
+	  smtpserver/policytest.c, smtpserver/policytest.h:
+	    Created base work for ESMTP "AUTH LOGIN ..." command
+	    processing.  It does receive the input parameter, and
+	    decodes the initial input, plus asks for the password,
+	    plus decodes that, but then the final hurdle of checking
+	    the password is not completed -- all the kwazillion ways
+	    of doing it in different systems ...
+
+	    THIS EXTENSION IS CURRENTLY NOT ENABLED IN THE SYSTEM!
+	
+	* router/rfc822.c:
+	    Converted from symbol() to symbol_lookup_db() in place where
+	    the data to be looked up is stored in specific spl set.
+
+	* include/ta.h, scheduler/mailq.c, scheduler/msgerror.c,
+	  scheduler/prototypes.h, scheduler/qprint.c, scheduler/scheduler.c,
+	  scheduler/scheduler.h, transports/libta/ctlopen.c,
+	  transports/libta/lockaddr.c:
+	    I decided that there is no point in using 'long' to store offsets
+	    to transport specification file -- if that file exceeds 2G in
+	    32-bit systems we are in deep trouble anyway -- and there is no
+	    point in trying to fit this animal into 16-bit machines... Could
+	    squeeze around 16 bytes per recipient in the scheduler memory use.
+	    (Consider having a million recipients in memory data...)
+
+	* smtpserver/smtpserver.c, smtpserver/smtpserver.h,
+	  smtpserver/cfgread.c, smtpserver/smtpcmds.c,
+	  proto/smtpserver.conf.in:
+	    "PARAM no-multiline-replies" which hides away all RFC-821
+	    Appendix E described multiline replies, in case you have
+	    no other way to fix your non-conformant clients...
+	    The result is often rather jumbled as the last reported line
+	    usually isn't very usefull..
+	
+	* include/mail.h.in, include/ta.h, transports/libta/ctlopen.c,
+	  scheduler/scheduler.c:
+	    Reserve some space into "r" entries of the TA files for
+	    delay state reports.
+
+	* scheduler/scheduler.c:
+	    Don't unnecessarily unlink() ETRN requests twice..
+
+1999-04-21  Matti Aarnio  <mea@mea.tmt.tele.fi>
+
+	* ChangeLog:
+	    Log these last changes..
+
+	* include/listutils.h:
+	    A surprising macro in FreeBSD/OpenBSD clashed with s_push() gcc
+	    extended macro code contained variable name (_X), replaced with
+	    another name (_tmpX), which hopefully doesn't clash...
+
+	* scheduler/threads.c:
+	    Change 'ulong' type to 'u_long', which should please also
+	    FreeBSD and OpenBSD..
+
+	* configure.in:
+	    Modify tests for <tcpd.h>, and resolver so that systems where
+	    all headers are not idemponent will be able to do the test
+	    compiles successfully, and thus avoiding false negatives..
+
+	* smtpserver/mxverify.c:
+	    Changed IPv6 RBL tests to use "x.x.x....x.x.ip6.rbl.maps.vix.com"
+	    domain format.  Those small digits at the top of the address
+	    range without "ip6" are clashing with various IPv4 "banned"
+	    address spaces...
+
+1999-04-14  Matti Aarnio  <mea@mea.tmt.tele.fi>
+
+	* proto/cf/fqdnaliases.cf:
+	    Create fqdnalias:
+		foo@bar: foo@bar
+	    resolve it..  Without this change, the router
+	    will recurse infinitely and crash.  With this,
+	    the router will break the loop, but the result
+	    will still be stupid:
+		smtp bar foo@bar ...
+
+	* smtpserver/mxverify.c:
+	    Fatal RBL lookup error -- caused effectively all
+	    instances to try for IPv6 lookups which failed
+	    consistently.
+
+	* Makefile, Makefile.in:
+	    Release 2.99.50s15 (to have a clean point)
+
+1999-04-12  Matti Aarnio  <mea@mea.tmt.tele.fi>
+
+	* include/listutils.h:
+	    Small macro change to please gcc 2.7.2.1 at FreeBSD 3.1;
+	    but perhaps it is due to some unfortunate #define overwriting
+	    my macro contents somewhere else...  I am listening on
+	    the reports of the issue.
+
+1999-04-10  Matti Aarnio  <mea@mea.tmt.tele.fi>
+
+	* smtpserver/policytest.h, smtpserver/policytest.c,
+	  smtpserver/mxverify.c:
+	    A surprise was found in pure IPv6 operational environment
+	    regarding RBL policy testing.  Changed things to also do 
+	    IPv6 address RBL lookups in case the connection was not by
+	    IPv4-MAPPED addresses. (E.g. Lookup for A with zone in same
+	    manner as IP6.INT reversers construct it from the address,
+	    and then just add 'rbl.maps.vix.com' to the reverse address
+	    string in similar manner as IPv4 lookup works.)
+	    Of course I don't know what exact format the RBL will use
+	    for IPv6 addresses, my quesses are:
+b.3.b.7.5.7.e.f.f.f.8.f.0.0.2.0.0.0.e.f.2.0.0.0.0.1.6.2.e.f.f.3.rbl.maps.vix.com.
+b.3.b.7.5.7.e.f.f.f.8.f.0.0.2.0.0.0.e.f.2.0.0.0.0.1.6.2.e.f.f.3.ip6.rbl.maps.vix.com.
+	    and the implemented thing is the first one of these.
+	    The address in question is following:
+	mea.ipv6.tmt.tele.fi IN AAAA 3ffe:2610:2:fe00:200:f8ff:fe75:7b3b
+
+	* transports/mailbox/mailbox.c:
+	    Another way how  getpwnam()  surprised -- errno value
+	    isn't all zero in Linux with glibc 2.1 in all conditions;
+	    username contained multiple dots ("a.b.c") yielded errno
+	    value ENOENT  :-O  (At OSF/1 EINVAL can be had for valid
+	    lookup without found entry...)  Sigh.
+
+	* include/shmmib.h, scheduler/scheduler.c, scheduler/scheduler.h,
+	  scheduler/threads.c, scheduler/update.c:
+	    Modified monitoring MIB set a bit for the uses of the
+	    scheduler.  Made a line in "mailq -Q" to show Counter32,
+	    and Gauge32 type variables.  (On the way towards the
+	    SNMP MIB..)
+
+1999-04-06  Matti Aarnio  <mea@mea.tmt.tele.fi>
+
+	* libsh/builtins.c:
+	    $(elements ...) tinkering; code "cleanup".  (This wasn't the
+	    real problem..)
+
+	* include/listutils.h:
+	    Test of ``LISTness'' vs. ``STRINGness'' became a bit confused
+	    with ELEMENT flag set.  Mask that off when comparing.
+	    (THIS was the problem that plagued $(elements ...) )
+
+	* libsh/execute.c:  Just small cleanup.
+
+	* libsh/expand.c:
+	    glob() expansion list construction straightening.  Pre-Sort
+	    items in reverse, and the list construction will be easy..
+
+	* libsh/interpret.c: functype()
+	    Remember always to set the return value variable -- if its
+	    pointer is available, otherwise some things behave strangely
+	    depening on what happens to be at the stack frame...
+	    ( + removed some dead code from the  interpret()  proper.)
+
+	* libsh/listtrees.c: _s_copy_tree()
+	    Added a comment (for myself) to explain things a bit.
+
+	* proto/cf/server.cf:
+	    Some extra tinkerings for those who want interactive router
+	    at their smtpserver.
+
+	* smtpserver/policytest.c: _addrtest_()
+	    Selectively test blanket allowance/denial things, so that
+	    when  e.g. MAIL FROM:<foo@[1.2.3.4]> the literal IP address
+	    can be looked up from the RBL/DUL/whatnot database while
+	    not allowing e.g. MAIL FROM to suddently allow input from
+	    any possible host just because once a suitable address is
+	    given in MAIL FROM data...
+
+	* smtpserver/smtpchild.c:
+	    Count the number of childs properly, and always remember to
+	    return a value thru the  childcntp  pointer.
+	
+1999-04-03  Matti Aarnio  <mea@mea.tmt.tele.fi>
+
+	* Makefile.in: 2.99.50-s14
+
+	* proto/cf/aliases.cf:
+	    Fixed a typo, which doesn't affect most people at all..
+
+	* scheduler/transport.c:
+	    Allow the  command="..."  to define at first some environment
+	    variables, before starting the program.  Syntax something like:
+	    command="VAR1=value1 VAR2=value2 command -params"
+	    No white-space is placeable into the values, all expansions that
+	    work for the command parameters will also work at values.
+
+	* transports/mailbox/mailbox.c:
+	    A strange DEC Tru64 (a.k.a. DEC OSF/1 a.k.a DEC UNIX) feature
+	    in  getpwnam(),  which seems to return errno==EINVAL, when no
+	    entry is found at /etc/passwd -- getpwnam() return value is
+	    NULL, of course.
+
+	* router/db.c:
+	    Changed the way how  D_db ("trace db") works; shows the query-
+	    in-progress proceeding.
+
+
+	* router/router.c:
+	    Turn stdout/stderr buffering from NON-BUF to LINE-BUF mode.
+
+	* proto/db/smtp-policy.src:
+	    Removed "relaycustomer +" from the  "_full_rights" set.
+
+	* man/Makefile.in, man/smtpserver.8, proto/smtpserver.conf.in,
+	  smtpserver/cfgread.c, smtpserver/smtpchilc.c, smtpserver/smtpcmds.c,
+	  smtpserver/smtpserver.c, smtpserver/smtpserver.h:
+	    - added new PARAMs to disable selected facilities
+	    - added new PARAMS to tune a few other facilities
+	    - allows limiting the number of parallel smtpserver processes
+	    - updated smtpserver.conf.in sample file
+	    - updated man-page
+
+	* Makefile.in: 2.99.50-s13
+
+	* include/listutils.h, libsh/builtins.c, libsh/execute.c, libsh/sh.h,
+	  libsh/expand.c, libsh/interpret.c, libsh/listmalloc.c, libsh/trap.c,
+	  libsh/listtrees.c, libsh/listutils.c, libsh/tregexp.c, libsh/zmsh.c,
+	  libsh/variables.c, router/db.c, router/functions.c, router/rfc822.c,
+	  router/router.c, router/router.c, router/shliaise.c, include/libsh.h,
+	  router/libdb/bind.c, router/libdb/bsdbtree.c, router/libdb/bsdhash.c,
+	  router/libdb/dbm.c, router/libdb/gdbm.c, router/libdb/header.c,
+	  router/libdb/hostsfile.c, router/libdb/incore.c, router/libdb/ldap.c,
+	  router/libdb/ndbm.c, router/libdb/ordered.c, router/libdb/yp.c,
+	  router/libdb/unordered.c:
+	    A MASSIVE rewrite of internal conscell processing facilities.
+
+	* smtpserver/cfgread.c, smtpserver/smtpserver.c:
+	    Accept PARAM keywords even if they are preceded with some
+	    white-space at the beginning of the line.
+
+	* router/rfc822.c:
+	    Modify privilege data verification; accept also negative values.
+
+	* transports/libta/tasyslog.c, utils/listexpand.c,
+	  smtpserver/smtpserver.h:
+	    Minor things to apeact some compilation environments
+
+	* compat/sendmail/sendmail.c, configure.in:
+	    Use  mkstemp()  function, if it is available
+
+	* smtpserver/smtpserver.c:
+	    Utter strictness in local mode is not so good..
+	    Turn the strictness selectively off in local mode.
+
+	* Makefile.in:
+	    Incremented version number
+
+	* proto/cf/server.cf:
+	    Accept "MAIL FROM:<>" from the client.
+
+	* INSTALL:
+	    Added a note about UUCICO/uucp uids, and 'zmailer'-group
+
+	* transports/mailbox/mailbox.c:
+	    Moved "running as root test down a bit, changed slightly
+	    some debug related diagnostic messages.
+
+	* transports/libra/diagnostic.c:
+	    If scheduler diagnostics are suppressed, suppress also
+	    syslog messages.
+
+	* transports/libta/tasyslog.c:
+	    Allow a bit longer diagnostic string to be sent...
+
+	* */Makefile.in, */*/Makefile.in:
+	    Change 'libz.a' to 'libzm.a' -- until somebody uses thus named
+	    library in some other system, and we can't sidestep it...
+
+	* smtpserver/policytest.c, smtpserver/smtprouter.c:
+	    Fix debug related buffer overflow in policytest.c (debug messages
+	    scribled over memory -- no user data at the writeout) add a bit
+	    more debug things into the  smtprouter.c so that we can see what
+	    is sent to the router process.
+
+	* smtpserver/policytest.c, smtpserver/policytest.h,
+	  smtpserver/mxverify.c, proto/db/smtp-policy.src:
+	    Updated commentary documents a bit at  smtp-policy.src  file.
+	    Made policytest stuff to use arbitary size strings as options,
+	    and pass such to  rbl_dns_test()  function as a colon-separated
+	    list of domain suffixes for where to query for RBL-like data.
+
+	* transports/mailbox/mailbox.c:
+	    Hunting an ellusive problem reporting [exit status 0] and
+	    not knowing which branch of the thing it really is from.
+	    Also matched UTIME/UTIMES test order with other instances
+	    in the same code.
+
+	* transports/sm/sm.c, transports/smtp/smtp.c,
+	  utils/pop-proxy/pop-proxy.c, scheduler/scheduler.c:
+	    Moving arount the  setvbuf()  calls a bit, propably mostly
+	    safe without this, but better be absolutely sure..
+
+	* libc/md5c.c:
+	    Cleanup of 32- vs. 64-bit platform portability issues.
+
+	* transports/libta/mimeheaders.c, transports/mailbox/mailbox.c,
+	  transports/smtp/smtp.c, transports/sm/sm.c, include/ta.h:
+	    A bug in how 8-bit containing body was downgraded to
+	    Quoted-Printable when the message in question was in
+	    fact NOT TEXT/PLAIN !  Aargh!.. (MULTIPART/ZZZ things..)
+
+	* transports/smtp/smtp.c:
+	    A Q-P encoding change from Arnt Hulbrandsen
+
+	* transports/mailbox/mailbox.c, router/rfc822.c, lib/selfaddrs.c:
+	    Adaptation to match some glibc 2.1 beta compability issues.
+
+	* proto/cf/crossbar.cf
+	* utils/listexpand.c
+	    Modernization work
+
+	* proto/smtpserver.conf.in
+	    Per default turn off 'DEBUG' command
+
+	* contrib/whoson-protocol.txt
+	    Protocol document (draft)
+
+	* INSTALL:
+	    Added a word about  scheduler.conf  file.
+
+	* doc/guides/smtp-etrn, doc/guides/offline-operation
+	    Generalized guide on ETRN usage with ZMailer,
+	    and one special case..
+
 1998-11-19  Matti Aarnio  <mea@mea.tmt.tele.fi>
 
 	* Makefile.in:
