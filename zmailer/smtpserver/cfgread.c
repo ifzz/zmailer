@@ -82,8 +82,26 @@ char *str;
 	sscanf(param1, "%d", &MaxSameIpSource);
 	return;
     }
+    if (cistrcmp(name, "MaxParallelConnections") == 0) {
+	sscanf(param1, "%d", &MaxParallelConnections);
+	return;
+    }
+    if (cistrcmp(name, "max-parallel-connections") == 0) {
+	sscanf(param1, "%d", &MaxParallelConnections);
+	return;
+    }
     if (cistrcmp(name, "ListenQueueSize") == 0) {
 	sscanf(param1, "%d", &ListenQueueSize);
+	return;
+    }
+    if (cistrcmp(name, "RcptLimitCnt") == 0) {
+	sscanf(param1, "%d", &rcptlimitcnt);
+	if (rcptlimitcnt < 100) rcptlimitcnt = 100;
+	return;
+    }
+    if (cistrcmp(name, "Rcpt-Limit-Count") == 0) {
+	sscanf(param1, "%d", &rcptlimitcnt);
+	if (rcptlimitcnt < 100) rcptlimitcnt = 100;
 	return;
     }
     if (cistrcmp(name, "accept-percent-kludge") == 0) {
@@ -123,6 +141,40 @@ char *str;
       vrfycmdok = 1;
       return;
     }
+
+    /* Some Enhanced-SMTP facility disablers */
+    if (cistrcmp(name, "nopipelining") == 0) {
+      pipeliningok = 0;
+      return;
+    }
+    if (cistrcmp(name, "noenhancedstatuscodes") == 0) {
+      enhancedstatusok = 0;
+      return;
+    }
+    if (cistrcmp(name, "noenhancedstatus") == 0) {
+      enhancedstatusok = 0;
+      return;
+    }
+    if (cistrcmp(name, "no8bitmime") == 0) {
+      mime8bitok = 0;
+      return;
+    }
+    if (cistrcmp(name, "nochunking") == 0) {
+      chunkingok = 0;
+      return;
+    }
+    if (cistrcmp(name, "nodsn") == 0) {
+      dsn_ok = 0;
+      return;
+    }
+    if (cistrcmp(name, "noehlo") == 0) {
+      ehlo_ok = 0;
+      return;
+    }
+    if (cistrcmp(name, "noetrn") == 0) {
+      etrn_ok = 0;
+      return;
+    }
 }
 
 struct smtpconf *
@@ -149,17 +201,19 @@ const char *name;
 	}
 	buf[sizeof(buf) - 1] = 0;	/* Trunc, just in case.. */
 
-	if (strncmp(buf, "PARAM", 5) == 0) {
-	    cfparam(buf);
+	cp = buf;
+	SKIPWHILE(isspace, cp);
+	if (strncmp(cp, "PARAM", 5) == 0) {
+	    cfparam(cp);
 	    continue;
 	}
 	scf.flags = "";
 	scf.next = NULL;
-	cp = buf;
+	s0 = cp;
 	SKIPWHILE(!isspace, cp);
 	c = *cp;
 	*cp = '\0';
-	s0 = s = strdup(buf);
+	s0 = strdup(s0);
 	for (s = s0; *s; ++s)
 	    if (isascii(*s & 0xFF) && isupper(*s & 0xFF))
 		*s = tolower(*s & 0xFF);

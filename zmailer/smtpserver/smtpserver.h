@@ -50,6 +50,7 @@
 #include <varargs.h>		/* If no  <stdarg.h>,  then presume <varargs.h> ... */
 #endif
 
+#include <netinet/in.h> /* In some systems needed before <arpa/inet.h> */
 #include <arpa/inet.h>
 
 #include "mail.h"
@@ -78,12 +79,14 @@ extern int wait();
 #include <netinet/in.h>
 #ifdef HAVE_NETINET_IN6_H
 #include <netinet/in6.h>
-#endif
+#else
 #ifdef HAVE_NETINET6_IN6_H
 #include <netinet6/in6.h>
-#endif
+#else
 #ifdef HAVE_LINUX_IN6_H
 #include <linux/in6.h>
+#endif
+#endif
 #endif
 
 #include "libc.h"
@@ -199,13 +202,22 @@ extern int TcpRcvBufferSize;
 extern int TcpXmitBufferSize;
 extern int ListenQueueSize;
 extern int MaxSameIpSource;
+extern int MaxParallelConnections;
 extern int percent_accept;
 extern int smtp_syslog;
 extern int allow_source_route;
 extern int debugcmdok;
 extern int expncmdok;
 extern int vrfycmdok;
+extern int pipeliningok;
+extern int mime8bitok;
+extern int chunkingok;
+extern int enhancedstatusok;
+extern int dsn_ok;
+extern int ehlo_ok;
+extern int etrn_ok;
 extern int strict_protocol;
+extern int rcptlimitcnt;
 
 extern const char *progname;
 extern int debug, skeptical, checkhelo, ident_flag, verbose;
@@ -329,7 +341,7 @@ extern char *optarg;
 #define	putc	fputc
 #endif				/* lint */
 
-extern int  childsameip __((Usockaddr *addr));
+extern int  childsameip __((Usockaddr *addr, int *childcntp));
 extern void childregister __((int cpid, Usockaddr *addr));
 extern void childreap   __((int cpid));
 
