@@ -1,6 +1,6 @@
 /*
  *  relaytest.c -- module for ZMailer's smtpserver
- *  By Matti Aarnio <mea@nic.funet.fi> 1997
+ *  By Matti Aarnio <mea@nic.funet.fi> 1997-1999
  *
  */
 
@@ -10,6 +10,7 @@
  *  - Addresses in form  <@foo:uu@dd>, <host!user>, <host!user@domain>
  *  - config-file stored messages.. when to pick next, and when not.
  *    (now will pick the first one, but there is no conditionality)
+ *  - P_A_LocalDomain use ??
  */
 
 #include "hostenv.h"
@@ -63,6 +64,7 @@
 #include "policytest.h"
 
 extern int debug;
+extern int percent_accept;
 
 static int resolveattributes __((struct policytest *, int, struct policystate *, const char *, int));
 static int  check_domain __((struct policytest *, struct policystate *, const char *, int));
@@ -70,7 +72,7 @@ static int  check_user __((struct policytest *, struct policystate *, const char
 static int  checkaddr  __((struct policytest *, struct policystate *, const char *));
 
 #if defined(AF_INET6) && defined(INET6)
-extern const struct in6_addr zv4mapprefix;
+extern const u_char zv4mapprefix[16];
 #endif
 
 /* KK() and KA() macroes are at "policy.h" */
@@ -102,22 +104,30 @@ static char *showattr __((const char *key));
 static char *showattr(key)
 const char *key;
 {
-    static char buf[256];
+    static char buf[500];
     sprintf(buf,"%d/%s/'%s'", key[0], KA(key[1]), key+2);
     return buf;
 }
 
-static char *showresults __((const char values[]));
-static char *showresults(values)
-const char *values;
+static int valueeq __((const char *value, const char *str));
+static int valueeq(value,str)
+     const char *value, *str;
 {
-    static char buf[256];
+    if (!value) return 0;
+    return (strcmp(value,str) == 0);
+}
+
+static char *showresults __((char *values[]));
+static char *showresults(values)
+char *values[];
+{
+    static char buf[2000];
     int i;
 
     buf[0] = '\0';
     for (i = P_A_FirstAttr; i <= P_A_LastAttr; ++i) {
 	sprintf(buf+strlen(buf),"%s ",KA(i));
-	sprintf(buf+strlen(buf),"%c ",values[i] ? values[i] : '.');
+	sprintf(buf+strlen(buf),"%s ",values[i] ? values[i] : ".");
     }
     return buf;
 }
@@ -140,10 +150,10 @@ const struct policystate *state;
 	printf("000- rcpt_nocheck=%d\n", state->rcpt_nocheck);
 
 	for ( i = P_A_FirstAttr; i <= P_A_LastAttr ; ++i) {
-		printf("000- %s: %s, value=%c\n",
+		printf("000- %s: %srequested, value=%s\n",
 		       KA(i),
-		       (state->origrequest & (1<<i)) ? "requested" : "not req",
-		       state->values[i]?state->values[i]:'.');
+		       (state->origrequest & (1<<i)) ? "" : "not ",
+		       state->values[i]?state->values[i]:".");
 	}
 }
 
@@ -315,17 +325,22 @@ int init;
 {
     char *str, *str_base, pbuf[256];
     int rlen, result, interest;
+    char *msgstr = NULL;
 
     if (init) {
 	/* First call of this function. Not called recursively. */
 	/* Zero return value array. */
+	int i;
+	for (i = 0; i <= P_A_LastAttr; ++i) {
+	  if (state->values[i])   free(state->values[i]);
+	  if (state->messages[i]) free(state->messages[i]);
+	}
 	memset(state->values, 0, sizeof(state->values));
+	memset(state->messages, 0, sizeof(state->messages));
 
 	state->origrequest = state->request;
     }
     --recursions;
-
-    state->request |= (1 << P_A_MESSAGE);
 
     if (debug)
        printf("000- Key: %s\n", showkey(key));
@@ -379,6 +394,12 @@ int init;
 	if (debug)
 	  printf("000-   Attribute: %s\n", showattr(str));
 
+	if (str[1] == P_A_MESSAGE) {
+	  if (msgstr) free(msgstr);
+	  msgstr = strdup(str+2);
+	  goto nextattr;
+	}
+
 	interest = 1 << str[1];	/* Convert attrib. num. value into flag bit */
 	if ((interest & state->request) == 0) {
 	    /* Not interested in this attribute, skip into next. */
@@ -391,14 +412,13 @@ int init;
 	    state->request &= ~interest;
 	}
 
-	if (str[1] == P_A_MESSAGE) {
+	if (P_A_FirstAttr <= str[1] && str[1] <= P_A_LastAttr) {
+	  /* If a message was given in previous attribute, pick it! */
+	  state->messages[0xFF & (str[1])] = msgstr;
+	  msgstr = NULL;
+	}
 
-	  if (state->msgstr != NULL)
-	    free(state->msgstr);
-	  state->msgstr = strdup(str+2);
-	  goto nextattr;
-
-	} else if (str[1] == P_A_InboundSizeLimit) {
+	if (str[1] == P_A_InboundSizeLimit) {
 
 	  sscanf(str+2,"%li", &state->maxinsize);
 	  goto nextattr;
@@ -407,6 +427,15 @@ int init;
 
 	  sscanf(str+2,"%li", &state->maxoutsize);
 	  goto nextattr;
+
+	} else if ((str[2] != '+' && str[2] != '-') &&
+		   !state->values[str[1] & 0xFF]) {
+
+	  /* Supply suffix domain (set), e.g.:
+	         RBL.MAPS.VIX.COM,DUL.MAPS.VIX.COM
+	     whatever you want ... */
+
+	  state->values[str[1] & 0xFF] = strdup(str + 2);
 
 	} else if (str[2] != '+' && str[2] != '-') {
 
@@ -418,16 +447,23 @@ int init;
 	   str[1] is attributes id constant, str[2] attribute flag. */
 
 	if (P_A_FirstAttr <= str[1] && str[1] <= P_A_LastAttr) {
-	    if (state->values[str[1] & 0xFF] == 0)
-		state->values[str[1] & 0xFF] = str[2];
+	    if (!state->values[str[1] & 0xFF])
+		state->values[str[1] & 0xFF] = strdup(str + 2);
 	  if (debug)
 	    printf("000-     accepted!\n");
 	} else {
 	  if (debug)
-	    printf("000-   Unknown attribute, number: %d\n", str[1] & 0xFF);
+	    printf("000-   Unknown attribute, number: %d\n", str[1]);
 	}
 
     nextattr:
+
+	/* If this wasn't the P_A_MESSAGE, we drop possibly
+	   existing message here.. */
+	if (str[1] != P_A_MESSAGE) {
+	  if (msgstr) free(msgstr);
+	  msgstr = NULL;
+	}
 
 	rlen -= str[0];
 	str  += str[0];
@@ -443,6 +479,8 @@ int init;
     /* Free memory from attribute list. Allocated in dbquery. */
     if (str_base)
 	free(str_base);
+
+    if (msgstr) free(msgstr);
 
     return 0;
 }
@@ -466,13 +504,6 @@ const char *pbuf;
 	result = resolveattributes(rel, maxrecursions, state, pbuf, 1);
 	if (debug) {
 	  printf("000- Results: %s\n", showresults(state->values));
-/*
-	  int i;
-	  printf("000- Results: ");
-	  for (i = 0; i < sizeof(state->values); i++)
-	    printf(":%c", state->values[i] ? state->values[i] : '0');
-	  printf("\n");
-*/
 	}
 	return (result);
     }
@@ -482,13 +513,6 @@ const char *pbuf;
 	result = resolveattributes(rel, maxrecursions, state, pbuf, 1);
 	if (debug) {
 	  printf("000- Results: %s\n", showresults(state->values));
-/*
-	  int i;
-	  printf("000- Results: ");
-	  for (i = 0; i < sizeof(state->values); i++)
-	    printf(":%c", state->values[i] ? state->values[i] : '0');
-	  printf("\n");
-*/
 	}
 	return (result);
     } else if (pbuf[1] == P_K_IPv4)
@@ -633,34 +657,47 @@ int whosonrc;
 }
 
 
-static int _addrtest_(rel, state, pbuf)
+static int _addrtest_ __((struct policytest *rel, struct policystate *state, const char *pbuf, int sourceaddr));
+
+static int _addrtest_(rel, state, pbuf, sourceaddr)
 struct policytest *rel;
 struct policystate *state;
 const char *pbuf;
+int sourceaddr;
 {
-    u_char ipv4addr[4];
+    u_char ipaddr[16];
+    int ipaf = pbuf[1];
 
     if (pbuf[1] == P_K_IPv4)
-      memcpy(ipv4addr, pbuf+2, 4);
+      memcpy(ipaddr, pbuf+2, 4);
+    if (pbuf[1] == P_K_IPv6)
+      memcpy(ipaddr, pbuf+2, 16);
 
     /* state->request initialization !! */
 
-    state->request = ( 1 << P_A_REJECTNET         |
-		       1 << P_A_FREEZENET         |
-		       1 << P_A_RELAYCUSTNET      |
-		       1 << P_A_TestDnsRBL        |
-		       1 << P_A_RcptDnsRBL        |
-		       1 << P_A_InboundSizeLimit  |
-		       1 << P_A_OutboundSizeLimit |
-		       1 << P_A_FullTrustNet	  |
-		       1 << P_A_TrustRecipients   |
-		       1 << P_A_TrustWhosOn        );
+    if (sourceaddr)
+      state->request = ( 1 << P_A_REJECTNET         |
+			 1 << P_A_FREEZENET         |
+			 1 << P_A_RELAYCUSTNET      |
+			 1 << P_A_TestDnsRBL        |
+			 1 << P_A_RcptDnsRBL        |
+			 1 << P_A_InboundSizeLimit  |
+			 1 << P_A_OutboundSizeLimit |
+			 1 << P_A_FullTrustNet      |
+			 1 << P_A_TrustRecipients   |
+			 1 << P_A_TrustWhosOn        );
+    else
+      state->request |= ( 1 << P_A_TestDnsRBL       |
+			  1 << P_A_RcptDnsRBL        );
 
     state->maxinsize  = -1;
     state->maxoutsize = -1;
 
     if (checkaddr(rel, state, pbuf) != 0)
       return 0; /* Nothing found */
+
+    if (!sourceaddr)
+      goto just_rbl_checks;
 
 #if 0
 /* if (IP address of SMTP client has 'rejectnet +' attribute) then
@@ -686,73 +723,90 @@ const char *pbuf;
 
     if (state->message != NULL)
       free(state->message);
-    state->message = state->msgstr;
-    state->msgstr = NULL;
+    state->message = NULL;
 
-    if (state->values[P_A_REJECTNET] == '+') {
+#define PICK_PA_MSG(attrib)	\
+	if (state->message) free(state->message);	\
+	state->message = state->messages[(attrib)];	\
+	state->messages[(attrib)] = NULL
+
+
+    if (valueeq(state->values[P_A_REJECTNET], "+")) {
       if (debug)
 	printf("000- policytestaddr: 'rejectnet +' found\n");
+      PICK_PA_MSG(P_A_REJECTNET);
       if (state->message == NULL)
 	state->message = strdup("Your network address is blackholed in our static tables");
       state->always_reject = 1;
       return -1;
     }
-    if (state->values[P_A_FREEZENET] == '+') {
+    if (valueeq(state->values[P_A_FREEZENET], "+")) {
       if (debug)
 	printf("000- policytestaddr: 'freezenet +' found\n");
+      PICK_PA_MSG(P_A_FREEZENET);
       if (state->message == NULL)
 	state->message = strdup("Your network address is blackholed in our static tables");
       state->always_freeze = 1;
       return  1;
     }
-    if (state->values[P_A_TrustRecipients] == '+') {
+    if (valueeq(state->values[P_A_TrustRecipients], "+")) {
       if (debug)
 	printf("000- policytestaddr: 'trustrecipients +' found\n");
       state->trust_recipients = 1;
+      PICK_PA_MSG(P_A_TrustRecipients);
     }
-    if (state->values[P_A_FullTrustNet] == '+') {
+    if (valueeq(state->values[P_A_FullTrustNet], "+")) {
       if (debug)
 	printf("000- policytestaddr: 'fulltrustnet +' found\n");
       state->full_trust = 1;
+      PICK_PA_MSG(P_A_FullTrustNet);
     }
 #ifdef HAVE_WHOSON_H
-    if (state->values[P_A_TrustWhosOn] == '+') {
+    if (valueeq(state->values[P_A_TrustWhosOn], "+")) {
       if (debug)
 	printf("000- policytestaddr: 'trust-whoson +' found, accept? = %d\n",
 	       (state->whoson_result == 0));
       if (state->whoson_result == 0)
 	state->always_accept = 1;
+      PICK_PA_MSG(P_A_TrustWhosOn);
     }
 #endif
-    if (state->values[P_A_RELAYCUSTNET] == '+') {
+    if (valueeq(state->values[P_A_RELAYCUSTNET], "+")) {
       if (debug)
 	printf("000- policytestaddr: 'relaycustnet +' found\n");
       state->always_accept = 1;
+      PICK_PA_MSG(P_A_TrustWhosOn);
     }
     if (state->trust_recipients || state->full_trust || state->always_accept)
       return 0;
 
-    if (state->values[P_A_TestDnsRBL] == '+' &&
-	pbuf[1] == P_K_IPv4) {
-      int rc;
-      if (debug)
-	printf("000- policytestaddr: 'test-dns-rbl +' (IPv4) found;\n");
-      rc = rbl_dns_test(ipv4addr, &state->message);
-      if (debug)
-	printf("000-  rc=%d\n", rc);
-      return rc;
-    }
-    if (state->values[P_A_RcptDnsRBL] == '+' &&
-	pbuf[1] == P_K_IPv4) {
-      int rc;
-      if (debug)
-	printf("000- policytestaddr: 'rcpt-dns-rbl +' (IPv4) found;\n");
-      rc = rbl_dns_test(ipv4addr, &state->rblmsg);
-      if (debug)
-	printf("000-  rc=%d\n", rc);
-      return rc;
-    }
+    just_rbl_checks:;
 
+    if (state->values[P_A_TestDnsRBL] &&
+	!valueeq(state->values[P_A_TestDnsRBL], "-")) {
+      int rc;
+      if (debug)
+	printf("000- policytestaddr: 'test-dns-rbl %s' found;\n",
+	       state->values[P_A_TestDnsRBL]);
+      rc = rbl_dns_test(ipaf, ipaddr, state->values[P_A_TestDnsRBL], &state->message);
+      if (!state->message){ PICK_PA_MSG(P_A_TestDnsRBL); }
+
+      if (debug)
+	printf("000-  rc=%d\n", rc);
+      return rc;
+    }
+    if (state->values[P_A_RcptDnsRBL] &&
+	!valueeq(state->values[P_A_RcptDnsRBL], "-")) {
+      int rc;
+      if (debug)
+	printf("000- policytestaddr: 'rcpt-dns-rbl %s' found;\n",
+	       state->values[P_A_RcptDnsRBL]);
+      rc = rbl_dns_test(ipaf, ipaddr, state->values[P_A_RcptDnsRBL], &state->rblmsg);
+      if (!state->message){ PICK_PA_MSG(P_A_RcptDnsRBL); }
+      if (debug)
+	printf("000-  rc=%d\n", rc);
+      return rc;
+    }
     return 0;
 }
 
@@ -780,8 +834,10 @@ Usockaddr *raddr;
 
     state->message = NULL; /* This is early initial clearing */
 
-    if (raddr->v4.sin_family == 0)
+    if (raddr->v4.sin_family == 0){
+      state->full_trust = 1;
       return 0; /* Interactive testing... */
+    }
 
     if (raddr->v4.sin_family == AF_INET) {
       si4 = & (raddr->v4);
@@ -793,7 +849,7 @@ Usockaddr *raddr;
 #if defined(AF_INET6) && defined(INET6)
     if (raddr->v6.sin6_family == AF_INET6) {
       si6 = & (raddr->v6);
-      if (memcmp((void *)&si6->sin6_addr, &zv4mapprefix, 12) == 0) {
+      if (memcmp((void *)&si6->sin6_addr, zv4mapprefix, 12) == 0) {
 	/* This is IPv4 address mapped into IPv6 */
 	pbuf[0] = 7;
 	pbuf[1] = P_K_IPv4;
@@ -813,7 +869,8 @@ Usockaddr *raddr;
       return -2;
     }
 
-    return _addrtest_(rel, state, pbuf);
+    state->request = 0;
+    return _addrtest_(rel, state, pbuf, 1);
 }
 
 
@@ -876,7 +933,7 @@ int inlen;
 	pbuf[1] = P_K_IPv4;
 	pbuf[6] = 32;
       }
-      return _addrtest_(rel,state,pbuf);
+      return _addrtest_(rel,state,pbuf, 0);
     }
 
     plen = addr_len;
@@ -928,14 +985,14 @@ int inlen;
     return 0; /* Nothing found */
 }
 
-static const char * find_at __((const char *, int));
+static const char * find_nonqchr __((const char *, int, int));
 static const char *
-find_at(input, inlen)
+find_nonqchr(input, chr, inlen)
 const char *input;
-int inlen;
+int chr, inlen;
 {
   int quote = 0;
-  /* Find first unquoted '@' character, and return a pointer to it */
+  /* Find first unquoted ``chr'' character, and return a pointer to it */
   for (; inlen > 0; --inlen,++input) {
     if (*input == '"')
       quote = !quote;
@@ -943,7 +1000,7 @@ int inlen;
       --inlen; ++input;
       continue;
     }
-    if (*input == '@' && !quote)
+    if (*input == chr && !quote)
       return input;
   }
   return NULL;
@@ -969,7 +1026,7 @@ int inlen;
     pbuf[2+inlen] = 0;
     strlower(pbuf + 2);
 
-    at = find_at(pbuf + 2, inlen);
+    at = find_nonqchr(pbuf + 2, '@', inlen);
     if (!at) return 0;
 
     pbuf[inlen + 2] = '\0';
@@ -1025,12 +1082,14 @@ const int len;
    #    any further conversation refused
    #      [state->always_reject = 1; return -1;]
  */
-    if (state->values[P_A_REJECTNET] == '+') {
+    if (valueeq(state->values[P_A_REJECTNET], "+")) {
 	state->always_reject = 1;
+	PICK_PA_MSG(P_A_REJECTNET);
 	return -1;
     }
-    if (state->values[P_A_FREEZENET] == '+') {
+    if (valueeq(state->values[P_A_FREEZENET], "+")) {
 	state->always_freeze = 1;
+	PICK_PA_MSG(P_A_FREEZENET);
 	return  1;
     }
     return 0;
@@ -1065,24 +1124,28 @@ const int len;
    #    any further conversation refused
    #      [state->always_reject = 1; return -1;]
  */
-    if (state->values[P_A_REJECTNET] == '+') {
+    if (valueeq(state->values[P_A_REJECTNET], "+")) {
 	state->always_reject = 1;
+	PICK_PA_MSG(P_A_REJECTNET);
 	return -1;
     }
-    if (state->values[P_A_FREEZENET] == '+') {
+    if (valueeq(state->values[P_A_FREEZENET], "+")) {
 	state->always_freeze = 1;
+	PICK_PA_MSG(P_A_FREEZENET);
 	return  1;
     }
-    if (state->values[P_A_RELAYCUSTNET] == '+') {
+    if (valueeq(state->values[P_A_RELAYCUSTNET], "+")) {
       if (debug)
 	printf("000- pt_sourceaddr: 'relaycustnet +' found\n");
       state->always_accept = 1;
+      PICK_PA_MSG(P_A_RELAYCUSTNET);
       return  0;
     }
-    if (state->values[P_A_FullTrustNet] == '+') {
+    if (valueeq(state->values[P_A_FullTrustNet], "+")) {
       if (debug)
 	printf("000- pt_sourceaddr: 'fulltrustnet +' found\n");
       state->full_trust = 1;
+      PICK_PA_MSG(P_A_FullTrustNet);
       return  0;
     }
     return 0;
@@ -1105,7 +1168,7 @@ const int len;
 	return -1;
     if (state->always_freeze)
 	return 1;
-    if (state->full_trust)
+    if (state->full_trust || state->authuser)
       return 0;
 
     if (len == 0) /* MAIL FROM:<> -- error message ? */
@@ -1121,16 +1184,18 @@ const int len;
 
     /* Check source user */
     if (check_user(rel, state, str, len) == 0) {
-      if (state->values[P_A_FREEZESOURCE] == '+') {
+      if (valueeq(state->values[P_A_FREEZESOURCE], "+")) {
 	if (debug)
 	  printf("000- mailfrom: 'freezesource +'\n");
 	state->sender_freeze = 1;
+	PICK_PA_MSG(P_A_FREEZESOURCE);
 	return 1;
       }
-      if (state->values[P_A_REJECTSOURCE] == '+') {
+      if (valueeq(state->values[P_A_REJECTSOURCE], "+")) {
 	if (debug)
 	  printf("000- mailfrom: 'rejectsource +'\n");
 	state->sender_reject = 1;
+	PICK_PA_MSG(P_A_REJECTSOURCE);
 	return -1;
       }
     }
@@ -1141,7 +1206,7 @@ const int len;
 		       1 << P_A_SENDERNoRelay |
 		       1 << P_A_SENDERokWithDNS );
 
-    at = find_at(str, len);
+    at = find_nonqchr(str, '@', len);
     if (at != NULL) {
       /* @[1.2.3.4] ?? */
       if (check_domain(rel, state, at+1, len - (1 + at - str)) != 0)
@@ -1151,29 +1216,33 @@ const int len;
       return -1;
     }
 
-    if (state->values[P_A_SENDERNoRelay] == '+') {
+    if (valueeq(state->values[P_A_SENDERNoRelay], "+")) {
       if (debug)
 	printf("000- mailfrom: 'sendernorelay +'\n");
       state->sender_norelay = 1;
+      PICK_PA_MSG(P_A_SENDERNoRelay);
     }
-    if (state->values[P_A_SENDERokWithDNS] != 0) {
-      int rc = sender_dns_verify(state->values[P_A_SENDERokWithDNS],
+    if (state->values[P_A_SENDERokWithDNS]) {
+      int rc = sender_dns_verify(state->values[P_A_SENDERokWithDNS][0],
 				 at+1, len - (1 + at - str));
       if (debug)
 	printf("000- ... returns: %d\n", rc);
+      PICK_PA_MSG(P_A_SENDERokWithDNS);
       return rc;
     }
 
-    if (state->values[P_A_REJECTSOURCE] == '+') {
+    if (valueeq(state->values[P_A_REJECTSOURCE], "+")) {
 	if (debug)
 	  printf("000- mailfrom: 'rejectsource +'\n");
 	state->sender_reject = 1;
+	PICK_PA_MSG(P_A_REJECTSOURCE);
 	return -1;
     }
-    if (state->values[P_A_FREEZESOURCE] == '+') {
+    if (valueeq(state->values[P_A_FREEZESOURCE], "+")) {
 	if (debug)
 	  printf("000- mailfrom: 'freezesource +'\n");
 	state->sender_freeze = 1;
+	PICK_PA_MSG(P_A_FREEZESOURCE);
 	return -1;
     }
 
@@ -1184,20 +1253,13 @@ const int len;
       return rc;
     }
 
-    if (state->values[P_A_RELAYCUSTOMER] == '+') {
+    if (valueeq(state->values[P_A_RELAYCUSTOMER], "+")) {
 	if (debug)
 	  printf("000- mailfrom: 'relaycustomer +'\n");
 	state->rcpt_nocheck = 1;
+	PICK_PA_MSG(P_A_RELAYCUSTOMER);
 	return  0;
     }
-#if 0 /* Umm.. no.. */
-    if (state->values[P_A_RELAYCUSTOMER] == '-') {
-	if (debug)
-	  printf("000- mailfrom: 'relaycustomer -'\n");
-	state->sender_reject = 1;
-	return -1;
-    }
-#endif
     return 0;
 }
 
@@ -1214,24 +1276,29 @@ const int len;
     if (state->always_freeze) return  1;
     if (state->sender_freeze) return  1;
     if (state->full_trust)    return  0;
+    if (state->authuser)      return  0;
     if (state->trust_recipients) return 0;
 
     /* rcptfreeze even for 'rcpt-nocheck' ? */
 
     /* state->request initialization !! */
     state->request = ( 1 << P_A_RELAYTARGET     |
-		       1 << P_A_ACCEPTbutFREEZE );
+		       1 << P_A_ACCEPTbutFREEZE |
+		       1 << P_A_LocalDomain );
 
     /* Test first the full address */
     if (check_user(rel, state, str, len) == 0) {
-      if (state->values[P_A_RELAYTARGET] == '+') {
+      if (valueeq(state->values[P_A_RELAYTARGET], "+")) {
+	PICK_PA_MSG(P_A_RELAYTARGET);
 	return  0;
       }
-      if (state->values[P_A_RELAYTARGET] == '-') {
+      if (valueeq(state->values[P_A_RELAYTARGET], "-")) {
+	PICK_PA_MSG(P_A_RELAYTARGET);
 	return -1;
       }
-      if (state->values[P_A_ACCEPTbutFREEZE] == '+') {
+      if (valueeq(state->values[P_A_ACCEPTbutFREEZE], "+")) {
 	state->sender_freeze = 1;
+	PICK_PA_MSG(P_A_ACCEPTbutFREEZE);
 	return  1;
       }
     }
@@ -1241,9 +1308,10 @@ const int len;
 		       1 << P_A_ACCEPTbutFREEZE |
 		       1 << P_A_ACCEPTifMX      |
 		       1 << P_A_ACCEPTifDNS     |
-		       1 << P_A_TestRcptDnsRBL  );
+		       1 << P_A_TestRcptDnsRBL  |
+		       1 << P_A_LocalDomain );
 
-    at = find_at(str, len);
+    at = find_nonqchr(str, '@', len);
     if (at != NULL) {
       if (check_domain(rel, state, at+1, len - (1 + at - str)) != 0)
 	return -1;
@@ -1267,11 +1335,26 @@ const int len;
    #      [return -1;]
  */
 
-    if (state->values[P_A_RELAYTARGET] == '+') {
+    if (valueeq(state->values[P_A_LocalDomain], "+")) {
+	/* Ok, local domain recognized, now see if it has
+	   '%'-hack at the local-part.. */
+	int llen = (at - str);
+	const char *phack = find_nonqchr(str, '%', llen);
+	if (phack != NULL && percent_accept < 0)
+	  return -1; /* Reject the percent kludge */
+	/* How about '!' ??? */
+	phack = find_nonqchr(str, '!', llen);
+	if (phack != NULL && percent_accept < 0)
+	  return -1; /* Reject the percent kludge */
 	return  0;
     }
-    if (state->values[P_A_ACCEPTbutFREEZE] == '+') {
+    if (valueeq(state->values[P_A_RELAYTARGET], "+")) {
+	PICK_PA_MSG(P_A_RELAYTARGET);
+	return  0;
+    }
+    if (valueeq(state->values[P_A_ACCEPTbutFREEZE], "+")) {
 	state->sender_freeze = 1;
+	PICK_PA_MSG(P_A_ACCEPTbutFREEZE);
 	return  1;
     }
 
@@ -1283,17 +1366,18 @@ const int len;
 
     if (state->always_accept) {
       int rc, c = '-';
-      if (state->values[P_A_ACCEPTifMX] != 0) {
-	c = state->values[P_A_ACCEPTifMX];
+      if (state->values[P_A_ACCEPTifMX]) {
+	c = state->values[P_A_ACCEPTifMX][0];
       }
       rc = client_dns_verify(c, at+1, len - (1 + at - str));
       /* XX: state->message setup! */
       if (debug)
 	printf("000- ... returns: %d\n", rc);
+      PICK_PA_MSG(P_A_ACCEPTifMX);
       return rc;
     }
 
-    if (state->values[P_A_TestRcptDnsRBL] == '+' &&
+    if (valueeq(state->values[P_A_TestRcptDnsRBL], "+") &&
 	state->rblmsg != NULL) {
       /* Now this is cute... the source address had RBL entry,
 	 and the recipient domain had a request to honour the
@@ -1306,26 +1390,29 @@ const int len;
       return -1;
     }
 
-    if (state->values[P_A_ACCEPTifMX] != 0 || state->sender_norelay != 0) {
-      int rc = mx_client_verify(state->values[P_A_ACCEPTifMX],
-				at+1, len - (1 + at - str)); 
+    if (state->values[P_A_ACCEPTifMX] || state->sender_norelay != 0) {
+      int c = state->values[P_A_ACCEPTifMX] ? state->values[P_A_ACCEPTifMX][0] : '.';
+      int rc = mx_client_verify(c, at+1, len - (1 + at - str)); 
       /* XX: state->message setup! */
       if (debug)
 	printf("000- ...(mx_client_verify('%.*s')) returns: %d\n",
 	       (int)(len - (1 + at - str)), at+1, rc);
+      PICK_PA_MSG(P_A_ACCEPTifMX);
       return rc;
     }
-    if (state->values[P_A_ACCEPTifDNS] != 0) {
-      int rc = client_dns_verify(state->values[P_A_ACCEPTifDNS],
+    if (state->values[P_A_ACCEPTifDNS]) {
+      int rc = client_dns_verify(state->values[P_A_ACCEPTifDNS][0],
 				 at+1, len - (1 + at - str));
       /* XX: state->message setup! */
       if (debug)
 	printf("000- ... returns: %d\n", rc);
+      PICK_PA_MSG(P_A_ACCEPTifDNS);
       return rc;
     }
 
-    if (state->values[P_A_RELAYTARGET] == '-') {
-	return -1;
+    if (valueeq(state->values[P_A_RELAYTARGET], "-")) {
+      PICK_PA_MSG(P_A_RELAYTARGET);
+      return -1;
     }
 
     return 0;
@@ -1341,7 +1428,8 @@ const int len;
     state->request = ( 1 << P_A_RELAYTARGET );
 
     if (check_user(rel, state, str, len) == 0) {
-      if (state->values[P_A_RELAYTARGET] == '+') {
+      if (valueeq(state->values[P_A_RELAYTARGET], "+")) {
+	PICK_PA_MSG(P_A_RELAYTARGET);
 	return  0;
       }
     }
@@ -1349,15 +1437,18 @@ const int len;
 }
 
 
-int policytest(rel, state, what, str, len)
+int policytest(rel, state, what, str, len, authuser)
 struct policytest *rel;
 struct policystate *state;
 PolicyTest what;
-const char *str;
+const char *str, *authuser;
 const int len;
 {
     if (rel == NULL)
       return 0;
+
+    if (state->authuser == NULL)
+      state->authuser = (char*)authuser;
 
     if (debug) {
 	printf("000- policytest what=%d\n", what);
