@@ -25,4 +25,5 @@
 #DEFAULT (echo ""; id; echo %s; date; cat) >> $CVSROOT/CVSROOT/commitlog
 # or
 #DEFAULT (echo ""; id; echo %{sVv}; date; cat) >> $CVSROOT/CVSROOT/commitlog
-ALL			$CVSROOT/CVSROOT/log_accum2 -m sparclinux-cvs@vger.rutgers.edu -f $CVSROOT/CVSROOT/ChangeLog -s %s
+#
+ALL	$CVSROOT/CVSROOT/log_accum2 -m zmailer-update -f $CVSROOT/CVSROOT/ChangeLog -s %s
