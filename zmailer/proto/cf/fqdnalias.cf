@@ -37,6 +37,16 @@ else
 	fqdnaliases () { return 1 }
 fi
 
+#
+# Define an LDAP hook, just in case...
+#
+
+if [ -f $MAILVAR/db/fqdnalias.ldap ]; then
+	relation -lmt ldap -f $MAILVAR/db/fqdnalias.ldap fqdnaliasesldap
+else
+	fqdnaliasesldap () { return 1 }
+fi
+
 require fqdnaliasdb
 provide fqdnalias
 
@@ -72,7 +82,9 @@ fqdn_neighbour (domain, address, A) {
 	# normal target address locality testing, and such...
 
 	# Already expanded ?  If yes, go away!
-	$(expansions "$lcaddress") && return 1
+	if [ -n "$(expansions "$lcaddress")" ] ; then
+		return 1
+	fi
 
 	#   Yes, add to the expansions.  Success ?
 	#     Yes, Any success with filepriv from the alias db ?
@@ -88,6 +100,15 @@ fqdn_neighbour (domain, address, A) {
 			 listaddresses	-c "$a fqdn alias expansion" 	\
 					-e root			 |	\
 			 maprrouter $nattr "fqdnalias" "$address"	\
+				"$plustail" "$athost")
+	fi
+
+	if a="$(fqdnaliasesldap "$lcaddress")" ; then
+		db add expansions "$lcaddress" fqdnaliasesldap
+		return $(echo "$a" |					\
+			 listaddresses	-c "$a fqdn alias expansion" 	\
+					-e root			 |	\
+			 maprrouter $A "fqdnalias" "$address"		\
 				"$plustail" "$athost")
 	fi
 
@@ -112,6 +133,14 @@ fqdn_neighbour (domain, address, A) {
 				"$pl2" "$athost")
 
 	    fi
+	    if a="$(fqdnaliasesldap "$u2$athost")" ; then
+		db add expansions "$lcaddress" fqdnaliasesldap
+		return $(echo "$a" |					\
+			 listaddresses	-c "$a fqdn alias expansion" 	\
+					-e root			 |	\
+			 maprrouter $A "fqdnalias" "$address"		\
+				"$plustail" "$athost")
+	    fi
 	    ;;
 	tfiss
 
@@ -121,7 +150,9 @@ fqdn_neighbour (domain, address, A) {
 	# We may also match for:  "@domain.name"
 
 	# Already expanded ?  If yes, go away!
-	$(expansions "$athost") && return 1
+	if [ -n "$(expansions "$athost")" ]; then
+		return 1
+	fi
 
 	#   Yes, add to the expansions.  Success ?
 	#     Yes, Any success with filepriv from the alias db ?
@@ -137,6 +168,14 @@ fqdn_neighbour (domain, address, A) {
 			 listaddresses	-c "$a fqdn alias expansion" 	\
 					-e root			 |	\
 			 maprrouter $nattr "fqdnalias" "$address"	\
+				"$plustail" "$athost")
+	fi
+	if a="$(fqdnaliasesldap "$athost")" ; then
+		db add expansions "$lcaddress" fqdnaliasesldap
+		return $(echo "$a" |					\
+			 listaddresses	-c "$a fqdn alias expansion" 	\
+					-e root			 |	\
+			 maprrouter $A "fqdnalias" "$address"		\
 				"$plustail" "$athost")
 	fi
 
@@ -158,10 +197,11 @@ fqdn_neighbour (domain, address, A) {
 		db add expansions "$lcaddress" fqlist
 		priv=$(getpriv "644" $priv "$a" maillist)
 		nattr=$(newattribute $A privilege $priv sender "$l")
-		return $(listexpand	-E "$l" -e "$l" -p $priv	\
+		return $(runas $priv cat "$a" |				\
+		         listexpand	-E "$l" -e "$l" -p $priv	\
 					-c "$a file expansion"		\
 					"$nattr" "$a" "$user$athost"    \
-					"$plustail" "$athost" < "$a")
+					"$plustail" "$athost")
 	fi
 
 	# Ok, if the list (MAILVAR/fqlists/user@host) did exist, we did

@@ -6,7 +6,7 @@
 #include "hostenv.h"
 #include <stdio.h>
 #include <ctype.h>
-#include "malloc.h"
+#include "zmalloc.h"
 #include <pwd.h>
 #include <sysexits.h>
 #include <fcntl.h>
@@ -284,8 +284,7 @@ process(dp, answer)
 	  struct stat stbuf;
 
 	  fstat(FILENO(mfp),&stbuf);
-	  sprintf(fname,"%d",stbuf.st_ino);
-	  taspoolid(boundarystr, sizeof(boundarystr), stbuf.st_ctime, fname);
+	  taspoolid(boundarystr, stbuf.st_ctime, (long)stbuf.st_ino);
 	  strcat(boundarystr, "=_/fuzzy/");
 	  strcat(boundarystr, dom);
 	}

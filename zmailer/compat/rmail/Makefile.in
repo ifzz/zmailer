@@ -20,9 +20,9 @@ LN_S=		"@LN_S@"
 MKDIR=		@MKDIR@
 #
 INCL=   -I$(srcdir)/$(TOPDIR)/include -I$(TOPDIR)/include -I$(TOPDIR)
-LIB=    -L$(TOPDIR)/libs -lz -lzc
+LIB=    -L$(TOPDIR)/libs -lzm -lzc
 LIBDEB= $(TOPDIR)/libs/libtag
-CFLAGS= $(COPTS) $(CPPFLAGS) $(DEFS) $(RMAIL_INCL) $(INCL)
+CFLAGS= $(COPTS) $(CPPFLAGS) $(DEFS) $(INCL) $(RMAIL_INCL)
 #BIN=    /bin
 SOURCE=	$(srcdir)/rmail.c $(srcdir)/$(TOPDIR)/lib/linebuffer.c
 
@@ -50,7 +50,7 @@ linebuffer.o: $(srcdir)/$(TOPDIR)/lib/linebuffer.c
 # comment (loudly!) to the user --- who on earth can have
 # any modern system without symlinks ?
 install: $(LIBDEB) rmail
-	@rdir=`echo $(RMAILPATH)|sed -e 's!^\(.*\)/\([^/]*\)$$!\1!'`; $(MKDIR) $$rdir; echo "  rdir = $$rdir"
+	@rdir=`echo $(RMAILPATH)|sed -e 's!/[^/]*$$!!'`; $(MKDIR) -p $$rdir; echo "  rdir = $$rdir"
 	@$(INSTALL) -m 0755 rmail $(prefix)$(MAILBIN)/rmail.x ; \
 	mv $(prefix)$(MAILBIN)/rmail.x $(prefix)$(MAILBIN)/rmail
 	@if [ $(LN_S) = "ln -s" -a				\
@@ -97,9 +97,9 @@ $(TOPDIR)/libc/libzc.a-a:
 $(TOPDIR)/libc/libzc.a:
 	cd $(TOPDIR)/libc ; $(MAKE) $(MFLAGS)
 
-$(TOPDIR)/lib/libz.a-a:
+$(TOPDIR)/lib/libzm.a-a:
 	cd $(TOPDIR)/lib ; $(MAKE) $(MFLAGS)
-$(TOPDIR)/lib/libz.a:
+$(TOPDIR)/lib/libzm.a:
 	cd $(TOPDIR)/lib ; $(MAKE) $(MFLAGS)
 
 depend:

@@ -4,7 +4,7 @@
  */
 /*
  *	Lots of modifications (new guts, more or less..) by
- *	Matti Aarnio <mea@nic.funet.fi>  (copyright) 1992-1996
+ *	Matti Aarnio <mea@nic.funet.fi>  (copyright) 1992-1999
  */
 
 #include "hostenv.h"
@@ -204,7 +204,7 @@ msgerror(vp, offset, message)
 	vp->cfp->haderror = 1;
 	fprintf(fp, "%c%c%ld:%ld:%ld::%ld\t%s\t%s\n",
 		_CF_DIAGNOSTIC, _CFTAG_NORMAL, offset,
-		vp->headeroffset, vp->drptoffset,
+		(long)vp->headeroffset, (long)vp->drptoffset,
 		time(NULL), notary, message);
 	fflush(fp);
 #ifdef HAVE_FSYNC
@@ -376,7 +376,7 @@ reporterrs(cfpi)
 	struct ctlfile *cfpi;
 {
 	int i, n, wroteheader, byteidx, headeridx = -1, drptidx, fd;
-	long *lp;
+	int *lp;
 	time_t tstamp;
 	char *midbuf, *cp, *eaddr;
 	char *deliveryform;
@@ -591,12 +591,12 @@ reporterrs(cfpi)
 
 	{
 	  char *dom = mydomain(); /* transports/libta/buildbndry.c */
-	  char fname[20];
 	  struct stat stbuf;
 
-	  fstat(fileno(errfp),&stbuf);
-	  sprintf(fname,"%ld",(long)stbuf.st_ino);
-	  taspoolid(boundarystr, sizeof(boundarystr), stbuf.st_ctime, fname);
+	  fstat(fileno(errfp),&stbuf); /* doesn't matter exactly what,
+					  as long as unique */
+	  taspoolid(boundarystr, stbuf.st_ctime, (long)stbuf.st_ino);
+
 	  strcat(boundarystr, "=_/");
 	  strcat(boundarystr, dom);
 	}
@@ -624,6 +624,40 @@ reporterrs(cfpi)
 	    fprintf(errfp, "%s\n", ccp);
 	}
 
+
+	fprintf(errfp,"\n\
+Following is a copy of MESSAGE/DELIVERY-STATUS format section below.\n\
+It is copied here in case your email client is unable to show it to you.\n\
+The information here below is in  Internet Standard  format designed to\n\
+assist automatic, and accurate presentation and usage of said information.\n\
+In case you need human assistance from the Postmaster(s) of the system which\n\
+sent you this report, please include this information in your question!\n\
+\n\
+\tVirtually Yours,\n\
+\t\tAutomatic Email delivery Software\n\
+\n");
+
+
+	if (mydomain() != NULL) {
+	  fprintf(errfp, "Reporting-MTA: dns; %s\n", mydomain() );
+	} else {
+	  fprintf(errfp, "Reporting-MTA: x-local-hostname; -unknown-\n");
+	}
+	if (envid != NULL) {
+	  fprintf(errfp, "Original-Envelope-Id: ");
+	  decodeXtext(errfp,envid);
+	  putc('\n',errfp);
+	}
+	/* rfc822date() returns a string with trailing newline! */
+	fprintf(errfp, "Arrival-Date: %s", rfc822date(&cfpi->mtime));
+	fprintf(errfp, "\n");
+
+	/* Now scan 'em all again for IETF-NOTARY */
+	for (i = 0; i < notarycnt; ++i) {
+	  scnotaryreport(errfp, &notaries[i],&has_errors,no_error_report);
+	}
+
+
 	fprintf(errfp, "\n");
 	fprintf(errfp, "--%s\n", boundarystr);
 	fprintf(errfp, "Content-Type: message/delivery-status\n\n");
@@ -639,7 +673,7 @@ reporterrs(cfpi)
 	  putc('\n',errfp);
 	}
 	/* rfc822date() returns a string with trailing newline! */
-	fprintf(errfp, "Arrival-Date: %s", rfc822date(&cfpi->ctime));
+	fprintf(errfp, "Arrival-Date: %s", rfc822date(&cfpi->mtime));
 	fprintf(errfp, "\n");
 
 	/* Now scan 'em all again for IETF-NOTARY */

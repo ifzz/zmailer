@@ -1,12 +1,80 @@
-router/functions:
-	To document  lreplace, and lappend [half-hearted work]
-	check:  sh_last() -- rather weird way to search for
-				the last elt...
-
-smtpserver/policy:
-	<foo@[nn.nn.nn.nn]> policy acceptance ???
-
 Known/suspected bugs/Missing Features on current Zmailer sources
+
+- Configuration files, esp.   cf/aliases.cf   has controversy in it.
+  Many people think it is broken (I tend to agree) - 940614/mea
+
+- Canned error messages are abysmal -- they need more complete ways to
+  configure what is told and how, whole error facility needs an overhaul
+  in fact..  (See mention above about: IETF NOTARY)
+
+libc: "make install" is "crazy"
+proto:	"make install" -- nothing goes in ???
+		--> MAILSHARE/proto/ !!
+
+router:
+	Replace current multi-process router farm with one where queue
+	scanner runs interactive routers alike the smtpserver hooks
+	to routers:
+		$MAILBIN/router -io-i
+		z# stableprocess 123456
+		z# stableprocess 123457
+		z# stableprocess 123458
+		z# stableprocess 123459
+	All results (except prompts) of the router need to be dumped
+	to the router logfile.  At each prompt, that logfile can be
+	re-opened so that simple log rotate with 'mv' works.
+
+	(older entry way below had:)
+	Have separate queueing processor feeding actual routers
+	to take care of the problem related to message priorities.
+	Could implement:  high/normal/bulk/junk priorities which
+	contains ways to be able to process messages from different
+	work categories without causing starvation of some class
+	queue; E.g. at least one router per class, but if some
+	class is (momentrarily) empty, its router can work other
+	class jobs.
+
+	(another old entry had:)
+	- Log-file option does not set (reliably) the logfile
+	  to be something else, than the default.
+	** Well...  See  $MAILSHARE/cf/standard.cf:  dribble routine, and
+	** especially its calls!  Not so easy to configure externally...
+	- SIGHUP log close/reopen does not work quite as one would
+	  want it to work.  In fact it does not close the files, rather
+	  opens new ones after it has dup()ed old descriptors away from
+	  the harms way..  e.g. it leaks log-files..
+
+transports/smtp:
+	If reply waiting in smtp_sync() gets SIGALRM, program crashes..
+	(syncing for BDAT, for example.)
+
+	There is some memory leak (possibly in all ta programs?),
+	propably in MIME header rewrites.  It appears only in
+	very long living and hard working smtp-ta program as
+	slow size growth.
+
+	SSL/TLS client functionality has been asked for repeatedly.
+	To implement it we must rewamp the entire FILE* abstraction
+	based network socket (write) buffering at the smtp program,
+	PLUS at libta/mimeheaders.c ( writeheaders() ) as well...
+	Not so nice.  (AT&T Research Sfio *may* help here..)
+
+	VERIFY: BDAT (and DATA) status processing in case the remote
+	yields disk-full temporary error.
+
+	To rewrite the MX processing in streamlined flashion:
+	  In case two domains have common (sub-)set of MX servers, and
+	  we have been feeding mail to domain A thru MX-server B, and
+	  now we change to deliver domain C which too has MX-server B.
+	  We are to reuse the already open channel to server B to feed
+	  the message out even though the domain C might have had server
+	  D with lower preferrence..
+	  (Noting that all MX-hosts with same or larger privilege,
+	   than ourselves are to be pre-removed from the list!)
+
+	- We violate RFC 1123 part 5.2.2 which says that at MAIL FROM
+	  and at RCPT TO the domain parts MUST be primary DNS objects,
+	  *not* CNAMEs.  We never rewrite...
 
 - Somewhere ? (smtpserver, and perhaps smtp transport agent ?)
 	Implement OUTBOUND message size limit mechanism.
@@ -18,12 +86,29 @@ Known/suspected bugs/Missing Features on current Zmailer sources
 	A further complication is need to limit outbound
 	email's sizes when the inbound size is limited so
 	that our system will not send out anything to which
-	error report size is larger than out inbound limit.
+	error report size is larger than our inbound limit.
 
 	Problem being, of course, that outbound channels
 	need to interrogate that same configuration mechanism
 	to do "Sorry, this is too large for sending" processing.
 
+- All transport agents:
+	- Unify the content MIME processing routines;  Construct them
+	  to be a common sub-layer ?
+	- Do not decode Q-P or Base-64 if the resulting material exceeds
+	  RFC-821/RFC-822 line length limits (or whatever limits have
+	  been set).
+
+	(router + TA library + TA programs):
+	Router to scan message MIME structure, and to store that
+	into dense consise format which doesn't need prerescan of
+	the message *body* for every delivery attempt in case some
+	"in-flight" data conversions are desired.
+
+	- transporters: When decoding MIME-QP the final line MAY be of
+		".....=", which means there is no final NEWLINE.
+	Fixed on SMTP, must fix on MAILBOX, and SM!  (4-Jan-95)
+	(Prepared to do it, however only on SMTP it is fatal -- I think..)
 
 - scheduler:
 	How does arrival of a new job into active thread work in case
@@ -48,11 +133,6 @@ Known/suspected bugs/Missing Features on current Zmailer sources
 	recipients in given thread.  (alike 'manual-expiry', except
 	a bit smarter..)
 
-	Having two or more users at the same target domain, the
-	scheduler can produce error telling ORCPT of first user,
-	but giving final-recipient of the second one.  Hmm..
-	(Seen to happen with 2.99.50-s10)
-
 	A new management channel protocol.
 
 	- Delivery messages plain-text part needs easier human
@@ -76,6 +156,10 @@ Known/suspected bugs/Missing Features on current Zmailer sources
 	  living connection...
 
 - smtpserver
+  - Supply PARAM entries for *all* (well, very nearly) command-line
+    startup options where it makes sense...
+  - SSL/TLS code needs to be updated to support non-blocking operations,
+    which appeared at 0.9.4 release of the OpenSSL.
   - VERIFY: behaviour on BDAT (and DATA) phases when the disk fills
   -	Report that if the router subprocess crashes, interactive
 	processing goes into mixed state -- it reports 2XX, and
@@ -95,14 +179,6 @@ Known/suspected bugs/Missing Features on current Zmailer sources
 	  driver control; namely  "this domain can be valid source only
 				   when it is coming from this IP address"
 	  type of checkup...
-  - more complete address processing into policytest() routines
-  - Complete the fqdn address top-level domain existence verification
-    test activation based on:
-	- If policytest is in use, do it
-	- If "-sR" mode is on, do it
-  - truncate (somehow) rhostname, and helobuf data which are stored
-    into "rcvdfrom" envelope entry.  SMTP-systems allow only up to
-    about 1000 characters long lines..
 
 - "make install" does not handle manual-page installation properly,
   also alternate-root installation has a few odd ends (vacation
@@ -115,13 +191,6 @@ Known/suspected bugs/Missing Features on current Zmailer sources
 	[July 1997: technical writers are hard at work on this one]
 	[April 1998: Completing the work is at Matti's hands..]
 
-
-- All transport agents:
-	- Unify the content MIME processing routines;  Construct them
-	  to be a common sub-layer ?
-	- Do not decode Q-P or Base-64 if the resulting material exceeds
-	  RFC-821/RFC-822 line length limits (or whatever limits have
-	  been set).
 
 - transports/sm/sm.c:
 	- what UID it runs programs like procmail with ?
@@ -136,15 +205,6 @@ Known/suspected bugs/Missing Features on current Zmailer sources
 	  quotes from around a quoted destination address according to
 	  the RFC822 syntax. -- Is this always correct ?
 
-- router:
-	- Log-file option does not set (reliably) the logfile
-	  to be something else, than the default.
-	** Well...  See  $MAILSHARE/cf/standard.cf:  dribble routine, and
-	** especially its calls!  Not so easy to configure externally...
-	- SIGHUP log close/reopen does not work quite as one would
-	  want it to work.  In fact it does not close the files, rather
-	  opens new ones after it has dup()ed old descriptors away from
-	  the harms way..  e.g. it leaks log-files..
 
 - post-install-check
 	- check existence of mailq/tcp in /etc/services
@@ -168,19 +228,6 @@ Known/suspected bugs/Missing Features on current Zmailer sources
 	- $MAILVAR/db/ -dir, and files in it
 	- $MAILVAR/lists/ -dir, and files in it
 	- ~/.forward -files (and home directories)
-
-- transports/smtp/smtp.c: (and scheduler)
-	- VERIFY: BDAT (and DATA) status processing in case the remote
-	  yields disk-full temporary error.
-	- To rewrite the MX processing in streamlined flashion (see next)
-	- In case two domains have common (sub-)set of MX servers, and
-	  we have been feeding mail to domain A thru MX-server B, and
-	  now we change to deliver domain C which too has MX-server B.
-	  We are to reuse the already open channel to server B to feed
-	  the message out even though the domain C might have had server
-	  D with lower preferrence..
-	  (Noting that all MX-hosts with same or larger privilege,
-	   than ourselves are to be pre-removed from the list!)
 
 - IPv6 stuff:
 	- lib/selfaddrs.c: Don't properly do automatic IPv6 interface address
@@ -246,20 +293,6 @@ Known/suspected bugs/Missing Features on current Zmailer sources
 - DSN (Delivery Status Notification) mechanism does not (yet) report
   on "DELAY".
 
-- BUG! mailbox has a file creation failure window:
-        - mailbox1 tests to see if the mailbox exists, and it does not
-        - mailbox2 tests to see if the mailbox exists, and it does not
-        - mailbox1 tries to do exclusive file creation (and succeeds)
-        - mailbox2 tries to do exclusive file creation (and fails)
-  Time in between test, and creation is milliseconds, but if system
-  process scheduling hits in between, both believe to be acting in void.
-  This can propably be triggered by NOT having the target file in existence,
-  and sending a message with two addresses, one straight to the recipient
-  mailbox, and another via some alias.  System starts TWO mailbox programs
-  to feed the messages.  Try it enough times, and it will occur.
-	(18 Aug 1996 -- Fixed ? By allowing 'EEXIST' return from file
-	 creation, and understanding it as a result from a race above.))
-
 - Want to have more interactivity at the scheduler status and control
   mechanisms.  Especially thinking a new two-way system where there
   can be multiple manager interfaces acting at the scheduler ``mailq''
@@ -278,20 +311,6 @@ Known/suspected bugs/Missing Features on current Zmailer sources
 	 headers, but the loop-count exceeded trap is done in the
 	 same C-code without calling the scripts...)
 
-- transporters: Truly full-scale MIME-conversion facilities are in need!
-
-- transporters: When decoding MIME-QP the final line MAY be of
-		".....=", which means there is no final NEWLINE.
-	Fixed on SMTP, must fix on MAILBOX, and SM!  (4-Jan-95)
-	(Prepared to do it, however only on SMTP it is fatal -- I think..)
-
-- Configuration files, esp.   cf/aliases.cf   has controversy in it.
-  Many people think it is broken (I tend to agree) - 940614/mea
-
-- Canned error messages are abysmal -- they need more complete ways to
-  configure what is told and how, whole error facility needs an overhaul
-  in fact..  (See mention above about: IETF NOTARY)
-
 - Sometimes incoming SMTP can be a hellish load, need to introduce
   a load-limited incoming SMTP acceptor (smtpserver/smtpserver.c)
   (Rayan wrote it, but never released it..)
@@ -307,25 +326,17 @@ Known/suspected bugs/Missing Features on current Zmailer sources
   it would require fairly large rewrite of the SMTP-server..
 
   Also: What to do when there are more incoming SMTP sessions than the
-  process can have open file descriptors ?  Two for each way of SMTP (for
-  stdio library!) channel, one for each spool file in active use at the
-  input phase, and one for log. (The stdio is used only for SMTP responses,
-  and for spooling out the accumulated message.  Thus there SHOULD be enough
-  resources for all uses -- except when the system runs out of FDs per any
-  individual process..)
+  process can have open file descriptors ?  One for the SMTP socket, one
+  for each spool file in active use at the input phase, and one for log.
+  (The stdio is used only for SMTP responses, and for spooling out the
+   accumulated message.  Thus there SHOULD be enough resources for all
+   uses -- except when the system runs out of FDs per any individual
+   process..)
 
 - Processing of several headers is questionable/lack of:
-	From: <>  -- should be valid! --- now is (940626/mea)
-	Return-Path: <> -- ANYTHING ACCEPTED -- header removed! (961114/mea)
-		
 	Generic: header wrapping within N chars (like to 80-chars
 		 space of BITNET) and also infinite wide systems,
 		 like News.. (transports/libta/writeheaders.c ?)
 
 	Generic: RFC-1342 aka. non-US-ASCII chars in the headers..
 		 Auto-conversion and wrapping
-
-- On the zmailer@nic.funet.fi -list there has been also talk about
-  a desire to replace the zmsh with some other language, like Scheme..
-  I am not sure a lispish language is good one -- should postmasters
-  be Lisp-Hackers to configure the ZMailer ?
