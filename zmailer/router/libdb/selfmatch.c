@@ -41,15 +41,17 @@ conscell *
 search_selfmatch(sip)
 	search_info *sip;
 {
-	conscell *rval, *tmp;
 	int rc;
-	char rbuf[8];
+	char rbuf[8], *s;
+	int slen;
 
 	/* Pick up current set of interface addresses ...
 	   ... or from the ZENV variable  SELFADDRESSES. */
 	stashmyaddresses(NULL);
 
-	if (cistrncmp(sip->key,"IPv6:",5)==0) {
+	if (cistrncmp(sip->key,"IPv6 ",5)==0 ||
+	    cistrncmp(sip->key,"IPv6:",5)==0 ||
+	    cistrncmp(sip->key,"IPv6.",5)==0) {
 #if defined(AF_INET6) && defined(INET6)
 	  struct sockaddr_in6 si6;
 
@@ -74,9 +76,10 @@ search_selfmatch(sip)
 	}
 	if (rc == 0)
 	  return NULL;
-	sprintf(rbuf,"%d",rc);
-	rval = newstring(strsave(rbuf));
-	return rval;
+	sprintf(rbuf, "%d", rc);
+	slen = strlen(rbuf);
+	s = dupnstr(rbuf, slen);
+	return newstring(s, slen);
 }
 
 static void freeaddresses __((struct sockaddr **, int));

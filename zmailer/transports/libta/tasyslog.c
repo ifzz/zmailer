@@ -7,7 +7,7 @@
  *
  */
 
-#include "mailer.h"
+#include "hostenv.h"
 #include <stdio.h>
 #include <sysexits.h>
 #ifdef HAVE_STDARG_H
@@ -18,6 +18,7 @@
 #include <sys/types.h>
 #include <fcntl.h>
 #include <sys/stat.h>
+#include "malloc.h"
 #include "zsyslog.h"
 #include "mail.h"
 #include "ta.h"
@@ -82,11 +83,11 @@ const char *msg;
 	    spoolid, rp->addr->user, delays, xdelays, rp->addr->channel, statstr, msg);
   else {
     if (wttip != NULL)
-      sprintf(linebuf, "%s: to=<%.200s>, delay=%s, xdelay=%s, mailer=%.80s, relay=%.200s ([%.80s]), stat=%.80s %.200s",
+      sprintf(linebuf, "%s: to=<%.200s>, delay=%s, xdelay=%s, mailer=%.80s, relay=%.200s ([%.80s]), stat=%.80s %.400s",
 	    spoolid, rp->addr->user, delays, xdelays, rp->addr->channel,
 	      wtthost, wttip, statstr, msg);
     else
-      sprintf(linebuf, "%s: to=<%.200s>, delay=%s, xdelay=%s, mailer=%.80s, relay=%.200s, stat=%.80s %.200s",
+      sprintf(linebuf, "%s: to=<%.200s>, delay=%s, xdelay=%s, mailer=%.80s, relay=%.200s, stat=%.80s %.400s",
 	      spoolid, rp->addr->user, delays, xdelays, rp->addr->channel,
 	      wtthost, statstr, msg);
   }

@@ -4,7 +4,7 @@
  */
 /*
  *    Several extensive changes by Matti Aarnio <mea@nic.funet.fi>
- *      Copyright 1991-1998.
+ *      Copyright 1991-1999.
  */
 /*
  * Zmailer SMTP-server divided into bits
@@ -147,8 +147,7 @@ const char *buf, *cp;
     } else if (maxsize > 0 && filsiz > maxsize) {
 	mail_abort(SS->mfp);
 	SS->mfp = NULL;
-	type(SS, -552, "5.3.4", "Size of this message exceeds the fixed maximum");
-	type(SS, -552, "5.3.4", "size of  %ld  chars for received email ", maxsize);
+	type(SS, 552, "5.3.4", "Size of this message exceeds the fixed maximum size of  %ld  chars for received email ", maxsize);
 	typeflush(SS);
     } else {
 
@@ -162,7 +161,8 @@ const char *buf, *cp;
 
 	if (SS->policyresult < 0) {
 	  if (logfp != NULL)
-	    fprintf(logfp, "%d#\tContent-policy analysis ordered message rejection. (code=%d)\n", pid, SS->policyresult);
+	    type(NULL,0,NULL,
+		 "Content-policy analysis ordered message rejection. (code=%d)", SS->policyresult);
 	  type(SS, 552, m571, "Content-policy analysis rejected this message");
 	  mail_abort(SS->mfp);
 	  SS->mfp = NULL;
@@ -177,8 +177,9 @@ const char *buf, *cp;
 	    sprintf(polbuf,"policy-%d",SS->policyresult);
 	    if (mail_close_alternate(SS->mfp, FREEZERDIR, polbuf) != 0) {
 		if (logfp != NULL) {
-		  fprintf(logfp,"%d#\tmail_close_alternate(..'FREEZER','%s') failed, errno=%d (%s)\n",
-			  pid, polbuf, errno, strerror(errno));
+		  type(NULL,0,NULL,
+		       "mail_close_alternate(..'FREEZER','%s') failed, errno=%d (%s)",
+		       polbuf, errno, strerror(errno));
 		}
 		type(SS, 452, m430, "Message file disposition failed");
 		typeflush(SS);
@@ -222,7 +223,7 @@ const char *buf, *cp;
 			   SS->rhostname, SS->rport));
 
 		if (logfp != NULL) {
-		  fprintf(logfp, "%d#\t%s: %ld bytes\n", pid, taspid, tell);
+		  type(NULL,0,NULL,"%s: %ld bytes", taspid, tell);
 		  fflush(logfp);
 		}
 	    }
@@ -346,8 +347,7 @@ const char *buf, *cp;
     } else if (maxsize > 0 && tell > maxsize) {
 	mail_abort(SS->mfp);
 	SS->mfp = NULL;
-	type(SS, -552, "5.3.4", "Size of this message exceeds the fixed maximum");
-	type(SS, -552, "5.3.4", "size of  %ld  chars for received email ", maxsize);
+	type(SS, 552, "5.3.4", "Size of this message exceeds the fixed maximum size of  %ld  chars for received email ", maxsize);
     } else if (bdata_last) {
 	time_t mtime;
 	int inum;
@@ -362,7 +362,8 @@ const char *buf, *cp;
 
 	if (SS->policyresult < 0) {
 	  if (logfp != NULL)
-	    fprintf(logfp, "%d#\tContent-policy analysis ordered message rejection. (code=%d)\n", pid, SS->policyresult);
+	    type(NULL,0,NULL,
+		 "Content-policy analysis ordered message rejection. (code=%d)", SS->policyresult);
 	  type(SS, 552, m571, "Content-policy analysis rejected this message");
 	  mail_abort(SS->mfp);
 	  SS->mfp = NULL;
@@ -375,8 +376,10 @@ const char *buf, *cp;
 	    runasrootuser();
 	    if (mail_close_alternate(SS->mfp, FREEZERDIR, "policy") != 0) {
 		if (logfp != NULL) {
-		  fprintf(logfp,"%d#\tmail_close_alternate(..'FREEZER','%s') failed, errno=%d (%s)\n",
-			  pid, "policy", errno, strerror(errno));
+		  type(NULL,0,NULL,
+		       "mail_close_alternate(..'FREEZER','%s') failed, errno=%d (%s)",
+		       "policy", errno, strerror(errno));
+		  fflush(logfp);
 		}
 		type(SS, 452, m430, "Message file disposition failed");
 		SS->mfp = NULL;
@@ -403,7 +406,7 @@ const char *buf, *cp;
 	    type(SS, 250, "2.6.0", "%s Roger, got %ld bytes in the last chunk, stored %ld bytes into spool",
 		 taspid, bdata_chunksize, (long) tell);
 	    if (logfp)
-		fprintf(logfp, "%d#\t-- pipeline input: %d bytes\n", pid, s_hasinput(SS));
+		type(NULL,0,NULL,"-- pipeline input: %d bytes",s_hasinput(SS));
 
 	    if (smtp_syslog)
 	      zsyslog((LOG_INFO,
@@ -411,8 +414,8 @@ const char *buf, *cp;
 		       SS->rhostname, SS->rport));
 
 	    if (logfp != NULL) {
-		fprintf(logfp, "%d#\t%s: %ld bytes\n", pid, taspid, tell);
-		fflush(logfp);
+	      type(NULL,0,NULL,"%s: %ld bytes", taspid, tell);
+	      fflush(logfp);
 	    }
 	}
     } else {			/* Not last chunk! */
@@ -491,10 +494,117 @@ static char indexnum[256 + 1] =
 };
 
 /*
+ * BASE64 DECODER index table, and ENCODER map array...
+ */
+static int base64decode_index[128] = {
+	-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
+	-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
+	-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, 62, -1, -1, -1, 63,
+	52, 53, 54, 55, 56, 57, 58, 59, 60, 61, -1, -1, -1, -1, -1, -1,
+	-1, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14,
+	15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, -1, -1, -1, -1, -1,
+	-1, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40,
+	41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, -1, -1, -1, -1, -1
+};
+#define decodechar64(c)  (((c) < 0 || (c) > 127) ? -1 : base64decode_index[(c)])
+
+static char base64encode_array[64] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+
+int decodebase64string(instr,inlen,outstr,outspc,inleftover)
+     const char * instr;
+     char * outstr;
+     const char ** inleftover;
+     int inlen, outspc;
+{
+    int b64decoding = 1, outlen = 0;
+    int b64eod = 0, b64i = 0, i, c;
+    char b64c[4];
+
+    while (inlen > 0 && outlen < outspc && !b64eod) {
+      c = *instr++; --inlen;
+
+      if (c == '=' || !b64decoding) {
+	b64eod = 1;
+	continue;
+      }
+      i = decodechar64(c);
+      if (i < 0) continue;
+
+      b64c[b64i++] = i;
+      if (b64i < 2)
+	continue;
+      if (b64i == 2) {
+	c = (b64c[0] << 2) | ((b64c[1] & 0x30) >> 4);
+      } else if (b64i == 3) {
+	c = ((b64c[1] & 0x0f) << 4) | ((b64c[2] & 0x3c) >> 2);
+      } else {
+	c = (b64c[2] << 6) | b64c[3];
+	b64i = 0;
+	if (b64eod)
+	  b64decoding = 0;
+      }
+
+      outstr[outlen] = c;
+      ++outlen;
+    }
+    if (outlen < outspc)
+      outstr[outlen] = 0;
+    if (inleftover)
+      *inleftover = instr;
+    return outlen;
+}
+
+int encodebase64string(instr,inlen,outstr,outspc)
+     const char * instr;
+     char *outstr;
+     int inlen, outspc; /* Always positive values .. */
+{
+    /* Build groups of 3 bytes, encode them in 4 chars; if some byte
+       is not filled, mark the incomplete byte with '=' */
+    u_char b64out[4];
+    int b64i, outlen = 0, b64val;
+    while (inlen > 0 && outlen < outspc) {
+      b64i = inlen > 3 ? 3 : inlen;
+
+      b64val    = ((unsigned char) instr[0]) << 16;
+      if (b64i > 1)
+	b64val |= ((unsigned char) instr[1]) << 8;
+      if (b64i > 2)
+	b64val |= ((unsigned char) instr[2]);
+
+      b64out[3] = base64encode_array[ b64val & 63 ]; b64val >>= 6;
+      b64out[2] = base64encode_array[ b64val & 63 ]; b64val >>= 6;
+      b64out[1] = base64encode_array[ b64val & 63 ]; b64val >>= 6;
+      b64out[0] = base64encode_array[ b64val & 63 ];
+
+      switch(b64i) {
+      case 1:
+	b64out[2] = '=';
+      case 2:
+	b64out[3] = '=';
+      }
+
+      instr += b64i;
+      inlen -= b64i;
+
+      b64i = (b64i == 1) ? 3 : 4;
+      if ((outlen + b64i) < outspc) {	/* Can fit in .. */
+	memcpy(outstr+outlen, b64out, b64i);
+	outlen += b64i;
+      } else {				/* Can't fit in :-( */
+	memcpy(outstr+outlen, b64out, outspc-outlen);
+	outlen = outspc;
+      }
+    }
+    return outlen;
+}
+
+/*
  * Copy bytes from stdin to out, obeying sensible SMTP DATA input heuristics.
  *
- * If you can improve on this heavily optimized routine, I'd like to see it.
- * This version goes at better than 100kB/cpu-sec on a Sun 3/180.
+ * Rayan back in 1988:
+ *  "If you can improve on this heavily optimized routine, I'd like to see it.
+ *   This version goes at better than 100kB/cpu-sec on a Sun 3/180."
  */
 
 static int /* count of bytes */ mvdata(SS, msg)
@@ -520,9 +630,8 @@ char *msg;
     int insubject = 0;
     int has8bit = 0;		/* In headers */
     int has8bitsum = 0;
-    int from__err = 0;
+    /* int from__err = 0; */
     int linecnt = 0;
-    int was8bit = 0;
 #ifdef USE_TRANSLATION
     int wi;
     char hdr_cte[4000], hdr_ct[4000];
@@ -536,18 +645,6 @@ char *msg;
     int qp_chars = 0, qp_hex = 0;
     int b64decoding = 1, b64eod = 0, b64i = 0;
     char b64c[4];
-    static char index_64[128] =
-    {
-	-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
-	-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
-	-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, 62, -1, -1, -1, 63,
-	52, 53, 54, 55, 56, 57, 58, 59, 60, 61, -1, -1, -1, -1, -1, -1,
-	-1, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14,
-	15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, -1, -1, -1, -1, -1,
-	-1, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40,
-	41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, -1, -1, -1, -1, -1
-    };
-#define char64(c)  (((c) < 0 || (c) > 127) ? -1 : index_64[(c)])
 #endif				/* USE_TRANSLATION */
 
     typeflush(SS);
@@ -645,11 +742,11 @@ char *msg;
 	    if (X_translation && X_8bit && ct_is_text && (X_settrrc == 0))
 		do_translate = 1;
 	    if (logfp)
-		fprintf(logfp, "%d#\t(8bit decode: %s, translate: %s) [%s%s,%s]\n", pid,
+	      type(NULL,0,NULL,"(8bit decode: %s, translate: %s) [%s%s,%s]",
 		   do_decode ? "YES" : "NO", do_translate ? "YES" : "NO",
-			X_translation ? "-X " : "",
-			X_8bit ? "-8" : "",
-			ct_is_text ? "text" : "non-text");
+		   X_translation ? "-X " : "",
+		   X_8bit ? "-8" : "",
+		   ct_is_text ? "text" : "non-text");
 	    /* write out content-type and content-transfer-encoding */
 	    if (delay_ct) {
 		if (do_translate) {
@@ -756,13 +853,13 @@ char *msg;
 	  /* Gee... Only SPAMmers (Cyberpromo!) use this .. (I hope..) */
 	  SS->policyresult = FREEZE__X_ADVERTISEMENT_FOUND;
 	  if (logfp)
-	    fprintf(logfp, "%d#\tFound X-Advertisement header\n", pid);
+	    type(NULL,0,NULL,"Found X-Advertisement header");
 	}
 	if (CISTREQN(linebuf, "X-Advertisment:",15)) {
 	  /* Gee... Only SPAMmers (Cyberpromo!) use this .. (I hope..) */
 	  SS->policyresult = FREEZE__X_ADVERTISEMENT_FOUND;
 	  if (logfp)
-	    fprintf(logfp, "%d#\tFound X-Advertisment header\n", pid);
+	    type(NULL,0,NULL,"Found X-Advertisment header");
 	}
 #ifdef USE_ANTISPAM_HACKS
 	if (strncmp(linebuf, "X-UIDL:", 7)==0) {
@@ -783,7 +880,7 @@ char *msg;
 	    if (CISTREQN(s, "(really ", 8)) {
 	      SS->policyresult = FREEZE__IMPROBABLE_RECEIVED_HEADER_FOUND;
 	      if (logfp)
-		fprintf(logfp, "%d#\tImprobable Received header\n", pid);
+		type(NULL,0,NULL,"Improbable Received: header");
 	      break;
 	    }
 	    ++s;
@@ -803,22 +900,22 @@ char *msg;
 	  if (*s != '<') {
 	    SS->policyresult = FREEZE__MALFORMED_MESSAGE_ID_HEADER;
 	    if (logfp)
-	      fprintf(logfp, "%d#\tNo <> around Message-Id\n", pid);
+	      type(NULL,0,NULL,"No <> around Message-Id");
 	  } else if (s[1] == '@') {
 	    SS->policyresult = FREEZE__MALFORMED_MESSAGE_ID_HEADER;
 	    if (logfp)
-	      fprintf(logfp, "%d#\tSource route in Message-Id\n", pid);
+	      type(NULL,0,NULL,"Source route in Message-Id:");
 	  } else if (s[1] == '>') {
 	    SS->policyresult = FREEZE__MALFORMED_MESSAGE_ID_HEADER;
 	    if (logfp)
-	      fprintf(logfp, "%d#\tEmpty Message-Id\n", pid);
+	      type(NULL,0,NULL,"Empty Message-Id:");
 	  } else {
 	    const char *t = rfc821_path(s, 1);
 	    if (s == t) { /* error */
 #ifdef USE_STRICT_MSGID_FREEZING
 	      SS->policyresult = FREEZE__MALFORMED_MESSAGE_ID_HEADER;
 	      if (logfp)
-		fprintf(logfp, "%d#\tMessage-Id syntax error\n", pid);
+		type(NULL,0,NULL,"Message-Id: syntax error");
 #endif
 	    } else {
 	      while (*t == ' ' || *t == '\t' || *t == '\r' || *t == '\n')
@@ -826,7 +923,7 @@ char *msg;
 	      if (*t) {
 		SS->policyresult = FREEZE__MALFORMED_MESSAGE_ID_HEADER;
 		if (logfp)
-		  fprintf(logfp, "%d#\tSpurious junk after Message-Id\n", pid, t);
+		  type(NULL,0,NULL,"Spurious junk after Message-Id:");
 	      }
 	    }
 	  }
@@ -838,10 +935,14 @@ char *msg;
 		++s;
 	    if ((eol - s) < 4)
 		continue;	/* Hmm.. */
-	    if (CISTREQN("junk", s, 4))
+	    if (CISTREQN("high", s, 4))
+		mail_priority = _MAILPRIO_HIGH;
+	    else if (CISTREQN("junk", s, 4))
 		mail_priority = _MAILPRIO_JUNK;
 	    else if (CISTREQN("bulk", s, 4))
 		mail_priority = _MAILPRIO_BULK;
+	    else if (((eol - s) >= 6) && CISTREQN("normal", s, 6))
+		mail_priority = _MAILPRIO_NORMAL;
 	}
 #ifdef USE_TRANSLATION
 	if (X_translation && (X_settrrc == 0)) {
@@ -920,7 +1021,7 @@ char *msg;
 	col = 0;
     }
     if (logfp && verbose)
-	fprintf(logfp, "%d#\t(mail_priority=%d)\n", pid, mail_priority);
+      type(NULL,0,NULL,"(mail_priority=%d)", mail_priority);
 #endif
 
     /* ================ Normal email BODY input.. ================ */
@@ -987,7 +1088,7 @@ char *msg;
 		    if ((c == ' ') || (c == '\t') ||
 			(c == '\n') || (c == '\r'))
 			continue;
-		    b64c[b64i++] = char64(c);
+		    b64c[b64i++] = decodechar64(c);
 		    if (c == '=') {
 			b64eod = 1;
 			continue;

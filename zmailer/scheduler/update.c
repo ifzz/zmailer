@@ -263,6 +263,7 @@ unctlfile(cfp, no_unlink)
 	    zsyslog((LOG_INFO, "%s: complete (total %d recepients, %d failed)",
 		     taspid, cfp->rcpnts_total, cfp->rcpnts_failed));
 	  }
+	  ++MIBMtaEntry->mtaTransmittedMessagesSc;
 
 	  eunlink(path);
 	  if (verbose)
@@ -303,7 +304,6 @@ unctlfile(cfp, no_unlink)
 
 	--global_wrkcnt;
 	--MIBMtaEntry->mtaStoredMessages;
-
 	free_cfp_memory(cfp);
 }
 
@@ -520,9 +520,11 @@ deletemsg(msgid, curcfp)
 	 * this strange way of doing the unlink.
 	 */
 	while (cfp->head->next[L_CTLFILE] != NULL) {
+	  MIBMtaEntry->mtaStoredRecipients -= cfp->head->ngroup;
 	  cfp->head->ngroup = 0;
 	  unvertex(cfp->head,0,1);
 	}
+	MIBMtaEntry->mtaStoredRecipients -= cfp->head->ngroup;
 	cfp->head->ngroup = 0;
 	unvertex(cfp->head,0,1);
 }
@@ -622,6 +624,9 @@ static void vtxupdate(vp, index, ok)
 	  if (vp->index[i] == index) {
 	    /* remove us from the vertex indices */
 	    vp->ngroup -= 1;
+
+	    --MIBMtaEntry->mtaStoredRecipients;
+
 	    /* compact the index array */
 	    for (++i; i <= vp->ngroup; ++i)
 	      vp->index[i-1] = vp->index[i];
@@ -673,6 +678,7 @@ static void expaux(vp, index, buf)
 
 	/* Delete this vertex from scheduling datasets */
 	vtxupdate(vp, index, 0);
+	++MIBMtaEntry->mtaTransmittedRecipientsSc;
 }
 
 void
@@ -747,7 +753,7 @@ static int u_ok(vp, index, inum, offset, notary, message)
 
 	/* Delete this vertex from scheduling datasets */
 	vtxupdate(vp, index, 1);
-	++MIBMtaEntry->mtaTransmittedRecipients;
+	++MIBMtaEntry->mtaTransmittedRecipientsSc;
 	return 1;
 }
 
@@ -777,7 +783,7 @@ static int u_ok2(vp, index, inum, offset, notary, message)
 
 	/* Delete this vertex from scheduling datasets */
 	vtxupdate(vp, index, 1);
-	++MIBMtaEntry->mtaTransmittedRecipients;
+	++MIBMtaEntry->mtaTransmittedRecipientsSc;
 	return 1;
 }
 
@@ -806,7 +812,7 @@ static int u_ok3(vp, index, inum, offset, notary, message)
 
 	/* Delete this vertex from scheduling datasets */
 	vtxupdate(vp, index, 1);
-	++MIBMtaEntry->mtaTransmittedRecipients;
+	++MIBMtaEntry->mtaTransmittedRecipientsSc;
 	return 1;
 }
 
@@ -871,6 +877,7 @@ static int u_error(vp, index, inum, offset, notary, message)
 
 	/* Delete this vertex from scheduling datasets */
 	vtxupdate(vp, index, 0);
+	++MIBMtaEntry->mtaTransmittedRecipientsSc;
 	return 1;
 }
 
@@ -903,6 +910,7 @@ static int u_error2(vp, index, inum, offset, notary, message)
 
 	/* Delete this vertex from scheduling datasets */
 	vtxupdate(vp, index, 0);
+	++MIBMtaEntry->mtaTransmittedRecipientsSc;
 	return 1;
 }
 

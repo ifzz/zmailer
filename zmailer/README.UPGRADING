@@ -12,6 +12,20 @@
 	If you upgrade several steps at once, all the notes in between
 	are important, naturally!
 
+
+	ZMailer-2.99.50-s17
+		The SMTPSERVER no longer per default runs interactive
+		router underneath of itself.  This is due to several
+		potential security problems such mode contains.  This
+		means that without explicite enable at   smtpserver.conf,
+		commands  EXPN, VRFY, and router-assisted address processing
+		will not work ("style" param chars: f t v e )
+
+	ZMailer-2.99.50-s14
+		Policy database has evolved quite a bit, very least you
+		should recompile possible pre-existing policy dataset
+		using new 'makedb' binary before re-enabling your smtpserver.
+
 	ZMailer-2.99.50
 		The router script language no longer has 'setf' function.
 		Script usage of 'setf' have been replaced with 'lappend',
