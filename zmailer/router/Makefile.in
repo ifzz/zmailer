@@ -16,15 +16,15 @@ MAILBIN=	$(prefix)@MAILBIN@
 DEFS=		@DEFS@
 INSTALL=	@INSTALL@
 ROUTER_INCL=	@GENINCL@ @INCLRESOLV@
-ROUTER_LIB=	@GETPWLIB@ @LIBDBMS@ @LIBNIS@ @LIBRESOLV@ @LIBSOCKET@
+ROUTER_LIB=	@GENLIB@ @GETPWLIB@ @LIBDBMS@ @LIBNIS@ @LIBRESOLV@ @LIBSOCKET@
 #   Above the  LIBSOCKET (for SysVR4) must be last
 #
-INCL=		-I$(srcdir)/$(TOPDIR)/include -I$(TOPDIR)/include -I$(TOPDIR) -I$(srcdir)/$(TOPDIR)/libsh -I$(TOPDIR)/libsh -I.
+INCL=		@GENINCL@ -I$(srcdir)/$(TOPDIR)/include -I$(TOPDIR)/include -I$(TOPDIR) -I$(srcdir)/$(TOPDIR)/libsh -I$(TOPDIR)/libsh -I.
 CFLAGS=		$(COPTS) $(CPPFLAGS) $(DEFS) $(ROUTER_INCL) $(INCL)
 LIBMALLOC=	@LIBMALLOC@
 LIBMALLOCDEB=	$(TOPDIR)/libmalloc/libmalloc_d.a-a
 #
-LIB=		-L$(TOPDIR)/libs -lzmdb -lsh -lz -lzc $(LIBMALLOC)
+LIB=		-L$(TOPDIR)/libs -lzmdb -lsh -lzm -lzc $(LIBMALLOC)
 LIBDEB=		$(TOPDIR)/libs/libtag
 LINTLIB=	libdb/llib-llibdb.ln $(TOPDIR)/lib/llib-llibz.ln $(TOPDIR)/libc/llib-llibzc.ln
 SSL=		$(TOPDIR)/ssl/ssl
@@ -60,8 +60,8 @@ $(PROGRAM).third: $(TOPDIR)/include/rfc822.entry $(LIBDEB) version.o $(OBJS)
 version.c: $(OBJS) $(TOPDIR)/Makefile
 	@$(MAKE) $(MFLAGS) -f $(TOPDIR)/Makefile $@
 
-rfc822test: $(RFC822OBJS) $(TOPDIR)/libs/libz.a
-	$(CC) $(CFLAGS) $(RFC822OBJS) -o $@ $(TOPDIR)/libs/libz.a $(LIB)
+rfc822test: $(RFC822OBJS) $(TOPDIR)/libs/libzm.a
+	$(CC) $(CFLAGS) $(RFC822OBJS) -o $@ $(TOPDIR)/libs/libzm.a $(LIB)
 
 rfc822.entry:  $(TOPDIR)/include/rfc822.entry
 $(TOPDIR)/include/rfc822.entry rfc822.sst.c rfc822.sst.h:  rfc822.ssl ${SSL}
@@ -112,9 +112,9 @@ $(TOPDIR)/libc/libzc.a-a:
 $(TOPDIR)/libc/libzc.a:
 	cd $(TOPDIR)/libc ; $(MAKE) $(MFLAGS)
 
-$(TOPDIR)/lib/libz.a-a:
+$(TOPDIR)/lib/libzm.a-a:
 	cd $(TOPDIR)/lib ; $(MAKE) $(MFLAGS)
-$(TOPDIR)/lib/libz.a:
+$(TOPDIR)/lib/libzm.a:
 	cd $(TOPDIR)/lib ; $(MAKE) $(MFLAGS)
 
 libdb/libzmdb.a-a:

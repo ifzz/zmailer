@@ -302,6 +302,11 @@ long eofindex  = -1;		/* When negative, putmail() can't truncate() */
 int  dirhashes = 0;
 int  pjwhashes = 0;
 int  canonify_user = 0;
+int  do_xuidl = 0;		/* Store our own  X-UIDL: header to allow
+				   POP3 server to have some unique id for
+				   the messages..  IMAP4 does require
+				   something different -- 32-bit unique
+				   counter..  See RFC 2060 for IMAP4. */
 
 extern RETSIGTYPE wantout __((int));
 extern int optind;
@@ -420,11 +425,6 @@ main(argc, argv)
 	else
 	  ++progname;
 
-	if (geteuid() != 0 || getuid() != 0) {
-	  fprintf(stderr, "%s: not running as root!\n", progname);
-	  exit(EX_NOPERM);
-	}
-
 	s = getzenv("MAILBOX");
 	if (s != NULL) {
 	  maildirs[0] = s;
@@ -437,7 +437,7 @@ main(argc, argv)
 	logfile = NULL;
 	channel = CHANNEL;
 	while (1) {
-	  c = getopt(argc, (char*const*)argv, "abc:Cd:Dgh:Hl:PrRSMV8");
+	  c = getopt(argc, (char*const*)argv, "abc:Cd:Dgh:Hl:PrRSMVU8");
 	  if (c == EOF)
 	    break;
 	  switch (c) {
@@ -462,6 +462,9 @@ main(argc, argv)
 				   (one or two) of modulo 26 ('A'..'Z') alike
 				   the scheduler does its directory hashes. */
 	    ++pjwhashes;
+	    break;
+	  case 'U':
+	    do_xuidl = 1;
 	    break;
 	  case 'M':
 	    mmdf_mode = 1;
@@ -511,6 +514,12 @@ main(argc, argv)
 		  argv[0]);
 	  exit(EX_USAGE);
 	}
+
+	if (geteuid() != 0 || getuid() != 0) {
+	  fprintf(stderr, "%s: not running as root!\n", progname);
+	  exit(EX_NOPERM);
+	}
+
 	setreuid(0, 0);		/* make us root all over */
 	currenteuid = 0;
 
@@ -1103,16 +1112,62 @@ deliver(dp, rp, usernam, timestring)
 			 needed for multi-recipient processing ? */
 #endif
 	  unam = usernam;
+	  errno = 0;
 	  pw = getpwnam(usernam);
 	  if (pw == NULL) {
 
 	    /* No match as is ?  Lowercasify, and try again! */
 	    strlower((char*)usernam);
 
+	    errno = 0;
 	    pw = getpwnam(usernam);
 	    if (pw == NULL) {
 	      if (plus) *plus = '+';
-	      if (propably_x400(usernam)) {
+
+	      /* Linux, very least, seems to sometimes yield
+		 NULL and errno=ENOENT, when Single Unix Spec
+		 tells it to yield NULL and errno==0 :-|
+
+		 The problem seems to be quite broad, as most
+		 systems don't do sensible things, when two
+		 conditions hold: All database lookups were
+		 without errors (although did yield notning),
+		 and nothing was found!  The sensible thing
+		 would be to yield NULL along with   errno==0 ! */
+
+	      /* Now give the above, how the hell are we going
+		 to detect when any of the databases used for
+		 the username resolution has a hickup, and the
+		 lack of found username is simply due to the db
+		 problem, which time will solve (as with system
+		 operator taking some action).  */
+
+	      /* Many systems seem to use this in otherwise
+		 fine lookup -- to mark lack of data */
+	      if (errno == ENOENT)
+		errno = 0;
+#ifdef __osf__
+	      /* ... and OSF/1 *must* be different, of course ...
+		 (I just wonder what AIX does) */
+	      if (errno == EINVAL)
+		errno = 0;
+#endif
+	      if (errno != 0) { /* getpwnam() failed for some other
+				   reason than simply not finding the
+				   given user... */
+
+		if (verboselog)
+		  fprintf(verboselog,
+			"   getpwnam(\"%s\") failed (%d)\n", usernam, errno);
+
+		notaryreport(rp->addr->user,"failed",
+			     "5.3.0 (Error getting user identity)",
+			     "x-local; 550 (Error getting user identity)");
+		DIAGNOSTIC3(rp, usernam, EX_TEMPFAIL,
+			   "getpwnam for user \"%s\" failed; errno=%d",
+			   usernam, errno);
+
+	      } else if (propably_x400(usernam)) {
 
 		if (verboselog)
 		  fprintf(verboselog,
@@ -1134,8 +1189,8 @@ deliver(dp, rp, usernam, timestring)
 			     "x-local; 550 (User does not exist)");
 		DIAGNOSTIC(rp, usernam, EX_NOUSER,
 			   "user \"%s\" doesn't exist", usernam);
+
 	      }
-	      if (plus) *plus = '+';
 	      return;
 	    }
 	  }
@@ -1726,24 +1781,43 @@ putmail(dp, rp, fdmail, fdopmode, timestring, file)
 	  fromuser = "MAILER-DAEMON";
 
 	{
-	  char **hdrs = has_header(rp,"Return-Path:");
-	  if (hdrs) delete_header(rp,hdrs);
+	  char **hdrs;
+
+	  do {
+	    hdrs = has_header(rp,"Return-Path:");
+	    if (hdrs) delete_header(rp,hdrs);
+	  } while (hdrs);
+
 	  append_header(rp,"Return-Path: <%.999s>", fromuser);
 
 	  hdrs = has_header(rp,"To:");
 	  if (!hdrs) {
 	    /* No "To:" -header ?  Rewrite possible "Apparently-To:" header! */
+
 	    /* Sendmailism... */
-	    hdrs = has_header(rp,"Apparently-To:");
-	    if (hdrs) delete_header(rp,hdrs);
+	    do {
+	      hdrs = has_header(rp,"Apparently-To:");
+	      if (hdrs) delete_header(rp,hdrs);
+	    } while (hdrs);
+
 	    append_header(rp,"Apparently-To: <%.999s>", rp->addr->link->user);
 	  }
 
-	  hdrs = has_header(rp,"X-Orcpt:");
-	  if (hdrs) delete_header(rp,hdrs);
+	  do {
+	    hdrs = has_header(rp,"X-Orcpt:");
+	    if (hdrs) delete_header(rp,hdrs);
+	  } while (hdrs);
 
-	  hdrs = has_header(rp,"X-Envid:");
-	  if (hdrs) delete_header(rp,hdrs);
+	  do {
+	    hdrs = has_header(rp,"X-Envid:");
+	    if (hdrs) delete_header(rp,hdrs);
+	  } while (hdrs);
+
+	  if (do_xuidl)
+	    do {
+	      hdrs = has_header(rp,"X-UIDL:");
+	      if (hdrs) delete_header(rp,hdrs);
+	    } while (hdrs);
 	}
 
 	/* Add the From_ line and print out the header */
@@ -1761,6 +1835,13 @@ putmail(dp, rp, fdmail, fdopmode, timestring, file)
 	  fprintf(fp, "X-Envid: ");
 	  decodeXtext(fp, dp->envid);
 	  fprintf(fp, "\n");
+	}
+	if (do_xuidl && !topipe) {
+	  struct timeval tv;
+	  gettimeofday(&tv, NULL);
+
+	  fprintf(fp, "X-UIDL: %ld.%ld.%d\n",
+		  (long)tv.tv_sec, (long)tv.tv_usec, (int)getpid());
 	}
 	fprintf(fp, "\n");
 
@@ -1943,9 +2024,9 @@ program(dp, rp, cmdbuf, user, timestring, uid)
 	const char *timestring;
 	int uid;
 {
-	int i, pid, in[2], out[2];
+	int envi, rc, pid, in[2], out[2];
 	int gid = -1;
-	const char *env[20], *s;
+	const char *env[40], *s;
 	char buf[8192], *cp, *cpe;
 	int status;
 	struct passwd *pw;
@@ -1957,23 +2038,23 @@ program(dp, rp, cmdbuf, user, timestring, uid)
 
 	notaryreport(rp->addr->user, NULL, NULL, NULL);
 
-	i = 0;
-	env[i++] = "SHELL=/bin/sh";
-	env[i++] = "IFS= \t\n";
+	envi = 0;
+	env[envi++] = "SHELL=/bin/sh";
+	env[envi++] = "IFS= \t\n";
 	cp = buf;
 	*cp = 0; /* Trunc the buf string... */
 	cpe = buf + sizeof(buf) - 20;
 	if ((s = getzenv("PATH")) == NULL)
-	  env[i++] = "PATH=/usr/bin:/bin:/usr/ucb";
+	  env[envi++] = "PATH=/usr/bin:/bin:/usr/ucb";
 	else {
 	  sprintf(cp, "PATH=%.999s", s);
-	  env[i++] = cp;
+	  env[envi++] = cp;
 	  cp += strlen(cp) + 1;
 	}
 	s = getenv("TZ");
 	if (s != NULL) {
 	  sprintf(cp,"TZ=%s", s);
-	  env[i++] = cp;
+	  env[envi++] = cp;
 	  cp += strlen(cp) + 1;
 	}
 
@@ -1993,47 +2074,47 @@ program(dp, rp, cmdbuf, user, timestring, uid)
 	} else {
 	  gid = pw->pw_gid;
 	  sprintf(cp, "HOME=%.500s", pw->pw_dir);
-	  env[i++] = cp;
+	  env[envi++] = cp;
 	  cp += strlen(cp) + 1;
 	  if (user[0] == 0)
 	    sprintf(cp, "USER=%.100s", pw->pw_name);
 	  else
 	    sprintf(cp, "USER=%.100s", user);
-	  env[i++] = cp;
+	  env[envi++] = cp;
 	  cp += strlen(cp) + 1;
 	}
 	if (strcmp(rp->addr->link->channel,"error")==0)
 	  sprintf(cp, "SENDER=<>");
 	else
 	  sprintf(cp, "SENDER=%.999s", rp->addr->link->user);
-	env[i++] = cp;
+	env[envi++] = cp;
 	cp += strlen(cp) + 1;
 	sprintf(cp, "UID=%d", (int)uid);
-	env[i++] = cp;
+	env[envi++] = cp;
 	if ((s = getzenv("ZCONFIG")) == NULL)
 	  s = ZMAILER_ENV_FILE;
 	cp += strlen(cp) + 1;
 	sprintf(cp, "ZCONFIG=%.200s", s);
-	env[i++] = cp;
+	env[envi++] = cp;
 	if ((s = getzenv("MAILBIN")) == NULL)
 		s = MAILBIN;
 	cp += strlen(cp) + 1;
 	sprintf(cp, "MAILBIN=%.200s", s);
-	env[i++] = cp;
+	env[envi++] = cp;
 	if ((s = getzenv("MAILSHARE")) == NULL)
 		s = MAILSHARE;
 	cp += strlen(cp) + 1;
 	sprintf(cp, "MAILSHARE=%.200s", s);
-	env[i++] = cp;
+	env[envi++] = cp;
 	cp += strlen(cp) + 1;
 	if (rp->orcpt) {
 	  sprintf(cp, "ORCPT=%.999s", rp->orcpt);
-	  env[i++] = cp;
+	  env[envi++] = cp;
 	  cp += strlen(cp) + 1;
 	}
 	if (dp->envid) {
 	  sprintf(cp, "ENVID=%.999s", dp->envid);
-	  env[i++] = cp;
+	  env[envi++] = cp;
 	  cp += strlen(cp) + 1;
 	}
 
@@ -2041,7 +2122,7 @@ program(dp, rp, cmdbuf, user, timestring, uid)
 	  fprintf(verboselog,"To run a pipe with uid=%d gid=%d cmd='%s'\n",
 		  uid, gid, cmdbuf);
 
-	env[i] = NULL;
+	env[envi] = NULL;
 
 	if (cp >= cpe)
 	  /* OVERFLOWED THE 8kB BUFFER FOR THE NEW ENVIRONMENT VARIABLES! */
@@ -2070,6 +2151,7 @@ program(dp, rp, cmdbuf, user, timestring, uid)
 	pid = fork();
 	if (pid == 0) { /* child */
 	  const char *argv[100];
+	  int i;
 
 	  setregid(gid,gid);
 	  setreuid(uid,uid);
@@ -2091,10 +2173,11 @@ program(dp, rp, cmdbuf, user, timestring, uid)
 	  /* hmm.. must split the command line to inputs for  execve();
 	     I have uses for a strict environment without  /bin/sh ... [mea] */
 
-	  cp = cmdbuf+1;
+	  cp = (char*)cmdbuf+1;
 	  s = strchr(cp,'$');
 	  if (!s)
 	    s = strchr(cp,'>');
+
 	  if (*cp == '/' && s == NULL) {
 	    /* Starts with an ABSOLUTE PATH -- at least "/" */
 	    /* ... and does *NOT* contain '$', nor '>' */
@@ -2143,7 +2226,6 @@ program(dp, rp, cmdbuf, user, timestring, uid)
 	    /* execle(argv[0], cmdbuf+1,"-c",cmdbuf+1,(char*)NULL,env);*/
 	    execve("/sbin/sh", argv, env);
 	    /* execle(argv[0], cmdbuf+1, "-c", cmdbuf+1, (char *)NULL, env); */
-
 	  }
 
 	  write(2, "Cannot exec '", 13);
@@ -2193,27 +2275,27 @@ program(dp, rp, cmdbuf, user, timestring, uid)
 	/* Union or not, we treat it as if it were an integer.. */
 
 	if (status == 0) {
-	  i = EX_OK;
+	  rc = EX_OK;
 	  if (cp != buf)
 	    *cp++ = ' ';
-	  strcpy(cp, "[exit status 0]");
-	} else if ((status&0177) > 0) {
+	  strcpy(cp, "[Exit Status 0]");
+	} else if ((status & 0177) > 0) {
 	  if (cp != buf)
 	    *cp++ = ' ';
-	  sprintf(cp, "[signal %d", status&0177);
-	  if (status&0200)
+	  sprintf(cp, "[signal %d", status & 0177);
+	  if (status & 0200)
 	    strcat(cp, " (Core dumped)");
 	  strcat(cp, "]");
-	  i = EX_TEMPFAIL;
-	} else if ((i = (status >> 8) & 0377) > 0) {
+	  rc = EX_TEMPFAIL;
+	} else if ((rc = (status >> 8) & 0377) > 0) {
 	  if (cp != buf)
 	    *cp++ = ' ';
-	  sprintf(cp, "[exit status %d]", i);
+	  sprintf(cp, "[exit status %d]", rc);
 	  /* We report following status codes to the system as is,
 	     all the rest are treated as EX_TEMPFAIL, and retried.. */
-	  if (!(i == EX_NOPERM || i == EX_UNAVAILABLE || i == EX_NOHOST ||
-		i == EX_NOUSER || i == EX_DATAERR || i == EX_OK))
-	    i = EX_TEMPFAIL;
+	  if (rc != EX_NOPERM && rc != EX_UNAVAILABLE && rc != EX_NOHOST &&
+	      rc != EX_NOUSER && rc != EX_DATAERR     && rc != EX_OK )
+	    rc = EX_TEMPFAIL;
 	}
 
 	if (verboselog)
@@ -2221,7 +2303,7 @@ program(dp, rp, cmdbuf, user, timestring, uid)
 
 	time(&endtime);
 	notary_setxdelay((int)(endtime-starttime));
-	if (i == EX_OK) {
+	if (rc == EX_OK) {
 	  notaryreport(NULL,"delivery",
 		       "2.2.0 (Delivered successfully)",
 		       "x-local; 250 (Delivered successfully)");
@@ -2233,8 +2315,8 @@ program(dp, rp, cmdbuf, user, timestring, uid)
 		       buf2);
 	}
 	
-	DIAGNOSTIC(rp, cmdbuf, i, "%s", buf);
-	return i;
+	DIAGNOSTIC(rp, cmdbuf, rc, "%s", buf);
+	return rc;
 }
 
 static void mkhashpath __((char *, const char *));
@@ -2316,19 +2398,19 @@ creatembox(rp, uname, filep, uid, gid, pw)
 	    close(fd);
 	    {
 	      struct stat st;
-#ifdef	HAVE_UTIMES
+#ifdef	HAVE_UTIME
+	      struct utimbuf tv;
+	      stat(*filep,&st); /* This by all propability will not fail.. */
+	      tv.actime  = 0;	/* never read */
+	      tv.modtime = st.st_mtime;
+	      utime(*filep, &tv);
+#else
 	      struct timeval tv[2];
 	      stat(*filep,&st); /* This by all propability will not fail.. */
 	      tv[0].tv_sec = 0; /* never read */
 	      tv[1].tv_sec = st.st_mtime;
 	      tv[0].tv_usec = tv[1].tv_usec = 0;
 	      utimes(*filep, tv);
-#else
-	      struct utimbuf tv;
-	      stat(*filep,&st); /* This by all propability will not fail.. */
-	      tv.actime  = 0;	/* never read */
-	      tv.modtime = st.st_mtime;
-	      utime(*filep, &tv);
 #endif
 	    }
 	    return 1;
@@ -2595,7 +2677,7 @@ appendlet(dp, rp, fp, file, ismime)
 	      }
 	      if (writemimeline(&WS, s0, linelen) != linelen) {
 		DIAGNOSTIC(rp, file, EX_IOERR,
-			   "write to \"%s\" failed", file);
+			   "write to \"%s\" failed(1)", file);
 		return -256;
 	      }
 	      s0 = s;
@@ -2624,7 +2706,7 @@ appendlet(dp, rp, fp, file, ismime)
 	      ismime = 0;
 	    /* Ok, write the line */
 	    if (writemimeline(&WS, let_buffer, i) != i) {
-	      DIAGNOSTIC(rp, file, EX_IOERR, "write to \"%s\" failed", file);
+	      DIAGNOSTIC(rp, file, EX_IOERR, "write to \"%s\" failed(2)", file);
  	      MFPCLOSE;
 	      return -256;
 	    }
@@ -2643,7 +2725,7 @@ appendlet(dp, rp, fp, file, ismime)
 	  if (readalready != 0) {
 	    if (writebuf(&WS, let_buffer, readalready) != readalready) {
 	      DIAGNOSTIC(rp, file, EX_IOERR,
-			 "write to \"%s\" failed", file);
+			 "write to \"%s\" failed(3)", file);
 	      return -256;
 	    }
 	    rp->status = EX_OK;
@@ -2665,7 +2747,7 @@ appendlet(dp, rp, fp, file, ismime)
 	      return -256;
 	    }
 	    if (writebuf(&WS, let_buffer, i) != i) {
-	      DIAGNOSTIC(rp, file, EX_IOERR, "write to \"%s\" failed", file);
+	      DIAGNOSTIC(rp, file, EX_IOERR, "write to \"%s\" failed(4)", file);
 	      readalready = 0;
 	      return -256;
 	    }
@@ -2688,7 +2770,7 @@ appendlet(dp, rp, fp, file, ismime)
 	    if (s2 < dp->let_end && *s2 == '\n') ++s2, ++i;
 	    if (writemimeline(&WS, s, i) != i) {
 	      DIAGNOSTIC(rp, file, EX_IOERR,
-			 "write to \"%s\" failed", file);
+			 "write to \"%s\" failed(5)", file);
 	      return -256;
 	    }
 	    s = s2;
@@ -2696,7 +2778,7 @@ appendlet(dp, rp, fp, file, ismime)
 	} else {
 	  if (writebuf(&WS, s, dp->let_end - s) != (dp->let_end - s)) {
 	      DIAGNOSTIC(rp, file, EX_IOERR,
-			 "write to \"%s\" failed", file);
+			 "write to \"%s\" failed(6)", file);
 	      return -256;
 	  }
 	}
@@ -3191,12 +3273,10 @@ return_receipt (dp, retrecptaddr, uidstr)
 
 	{
 	  char *dom = mydomain(); /* transports/libta/buildbndry.c */
-	  char fname[20];
 	  struct stat stbuf;
 
 	  fstat(FILENO(mfp),&stbuf);
-	  sprintf(fname,"%ld",(long)stbuf.st_ino);
-	  taspoolid(boundarystr, sizeof(boundarystr), stbuf.st_ctime, fname);
+	  taspoolid(boundarystr, stbuf.st_ctime, (long)stbuf.st_ino);
 	  strcat(boundarystr, "=_/return-receipt/");
 	  strcat(boundarystr, dom);
 	}

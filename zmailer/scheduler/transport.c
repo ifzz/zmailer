@@ -36,11 +36,11 @@ extern int freeze;
 extern int mailqmode;
 
 static int  scheduler_nofiles = -1; /* Will be filled below */
-static int  runcommand __((const char **, struct vertex *, struct web *, struct web*));
-static void stashprocess __((int, int, int, struct web*, struct web*, struct vertex *, const char *argv[]));
-static void reclaim __((int, int));
+static int  runcommand   __((char * const argv[], char * const env[], struct vertex *, struct web *, struct web*));
+static void stashprocess __((int, int, int, struct web*, struct web*, struct vertex *, char * const argv[]));
+static void reclaim      __((int, int));
 static void waitandclose __((int));
-static void readfrom __((int));
+static void readfrom     __((int));
 
 static struct mailq *mq2root  = NULL;
 static int           mq2count = 0;
@@ -274,8 +274,12 @@ start_child(vhead, chwp, howp)
 	struct vertex *vhead;
 	struct web *chwp, *howp;
 {
-	char	*av[30], *s, *os, *cp, *ocp, buf[MAXPATHLEN];
-	int	i;
+#define MAXARGC 40
+	char *av[1+MAXARGC], *ev[1+MAXARGC], *s, *os, *cp, *ocp;
+	char buf[MAXPATHLEN*4];
+	char buf2[MAXPATHLEN];
+
+	int	 i, avi, evi;
 	static time_t prev_time = 0;
 	static int startcnt = 0; /* How many childs per second (time_t tick..) ? */
 	time_t this_time;
@@ -308,11 +312,12 @@ start_child(vhead, chwp, howp)
 	 * (also any ${ZENV} variable)
 	 */
 	os = buf;
+	avi = evi = 0;
 	for (i = 0; vhead->thgrp->ce.argv[i] != NULL; ++i) {
 	  if (strcmp(vhead->thgrp->ce.argv[i], replhost) == 0) {
-	    av[i] = howp->name;
+	    av[avi] = howp->name;
 	  } else if (strcmp(vhead->thgrp->ce.argv[i], replchannel) == 0) {
-	    av[i] = chwp->name;
+	    av[avi] = chwp->name;
 	  } else if (strchr(vhead->thgrp->ce.argv[i], '$') != NULL) {
 	    s = os;
 	    for (cp = vhead->thgrp->ce.argv[i]; *cp != '\0'; ++cp) {
@@ -327,8 +332,11 @@ start_child(vhead, chwp, howp)
 		    strcpy(s,howp->name);
 		  } else if (strcmp(ocp,"channel")==0) {
 		    strcpy(s,chwp->name);
-		  } else
-		    strcpy(s, getzenv(ocp));
+		  } else {
+		    char *t = getzenv(ocp);
+		    if (t)
+		      strcpy(s, t);
+		  }
 		  s += strlen(s);
 		  *cp = '}';
 		} else
@@ -337,25 +345,58 @@ start_child(vhead, chwp, howp)
 		*s++ = *cp;
 	    }
 	    *s = '\0';
-	    av[i] = os;
+	    av[avi] = os;
 	    os = s + 1;
 	  } else
-	    av[i] = vhead->thgrp->ce.argv[i];
+	    av[avi] = vhead->thgrp->ce.argv[i];
+
+	  if (os >= (buf+sizeof(buf))) {
+	    fprintf(stderr,"BUFFER OVERFLOW IN ARGV[] SUBSTITUTIONS!\n");
+	    abort();
+	  }
+
+	  if (avi == 0 && strchr(av[0],'=') != NULL) {
+	    ev[evi] = av[0];
+	    ++evi;
+	  } else if (avi == 0 && av[0][0] != '/') {
+	    /* Must add ${MAILBIN}/ta/ to be the prefix.. */
+
+	    static char *mailbin = NULL;
+
+	    if (!mailbin) mailbin = getzenv("MAILBIN");
+	    if (!mailbin) mailbin = MAILBIN;
+
+	    sprintf(buf2,"%s/%s/%s", mailbin, qdefaultdir, av[0]);
+	    av[avi++] = buf2;
+	    if (strlen(buf2) > sizeof(buf2)) {
+	      /* Buffer overflow ! This should not happen, but ... */
+	      fprintf(stderr,"BUFFER OVERFLOW IN ARGV[0] CONSTRUCTION!\n");
+	      abort();
+	    }
+	  } else
+	    ++avi;
+	  if (avi >= MAXARGC) avi = MAXARGC;
+	  if (evi >= MAXARGC) evi = MAXARGC;
 	}
-	av[i] = NULL;
+	av[avi] = NULL;
+	ev[evi] = NULL;
 
 	/* fork off the appropriate command with the appropriate stdin */
 	if (verbose) {
-	  printf("$");
-	  for (i = 0; av[i] != NULL; ++i)
+	  printf("${ ");
+	  for (i = 0; ev[i] != NULL; ++i)
+	    printf(" %s", ev[i]);
+	  printf(" }");
+	  for (i = 0; ev[i] != NULL; ++i)
 	    printf(" %s", av[i]);
 	  printf("\n");
 	}
-	return runcommand((const char **)av, vhead, chwp, howp);
+	return runcommand(av, ev, vhead, chwp, howp);
 }
 
-static int runcommand(argv, vhead, chwp, howp)
-	const char *argv[];
+static int runcommand(argv, env, vhead, chwp, howp)
+	char * const argv[];
+	char * const env[];
 	struct vertex *vhead;
 	struct web *chwp, *howp;
 {
@@ -366,7 +407,7 @@ static int runcommand(argv, vhead, chwp, howp)
 
 	uid = vhead->thgrp->ce.uid;
 	gid = vhead->thgrp->ce.gid;
-	cmd = vhead->thgrp->ce.command;
+	cmd = argv[0];
 	prio= vhead->thgrp->ce.priority;
 
 	if (pipes_create(to,from) < 0) return 0;
@@ -403,7 +444,7 @@ static int runcommand(argv, vhead, chwp, howp)
 	  resources_limit_nofiles(transportmaxnofiles);
 	  setgid(gid);	/* Do GID setup while still UID 0..   */
 	  setuid(uid);	/* Now discard all excessive powers.. */
-	  execv(cmd, (char**)argv);
+	  execve(cmd, argv, env);
 	  fprintf(stderr, "Exec of %s failed!\n", cmd);
 	  _exit(1);
 	} else if (pid < 0) {	/* fork failed - yell and forget it */
@@ -428,7 +469,7 @@ static void stashprocess(pid, fromfd, tofd, chwp, howp, vhead, argv)
 	int pid, fromfd, tofd;
 	struct web *chwp, *howp;
 	struct vertex *vhead;
-	const char *argv[];
+	char * const argv[];
 {
 	int i, l, j;
 	struct procinfo *proc;
