@@ -164,7 +164,7 @@ struct gaih_addrtuple **pat;
     *c2 = 0;
 
     if (*pat == NULL) {
-      *pat = (void*)malloc(sizeof(struct gaih_addrtuple));
+      *pat = malloc(sizeof(struct gaih_addrtuple));
       if (*pat == NULL)
 	return -(EAI_MEMORY);
     }
@@ -188,12 +188,11 @@ struct gaih_addrtuple **pat;
     continue;
 
 build:
-    if (req->ai_flags & AI_CANONNAME) {
+    if (req->ai_flags & AI_CANONNAME)
       if (prevcname && !strcmp(prevcname, c))
 	(*pat)->cname = prevcname;
       else
 	prevcname = (*pat)->cname = strdup(c);
-    }
 
     pat = &((*pat)->next);
 
@@ -230,7 +229,7 @@ FILE *vlog;
   char *prevcname = NULL;
   char *p, *ep;
   int answers, qdcount, i, j;
-  int rclass;
+  int rtype, rclass;
 
   answerlen = res_search(name, C_IN, type, (void*)answer, sizeof(answer));
   if (answerlen < 0) {
@@ -304,7 +303,7 @@ FILE *vlog;
   }
 
   if (vlog)
-    fprintf(vlog,"resolver(): question skipped, dn='%s', first answer at p=%d  answers=%d\n", dn, (int)(p-answer), (int)answers);
+    fprintf(vlog,"resolver(): question skipped, dn='%s', first answer at p=%d  answers=%d\n", dn, (p-answer), answers);
 
   /* Answer analysis */
   for ( ; answers > 0; --answers) {
@@ -312,7 +311,7 @@ FILE *vlog;
     if (i < 0) {
       if (vlog)
 	fprintf(vlog, "resolver() dn_expand() fail; eof-p=%d, p-start=%d\n",
-		(int)(ep-p), (int)(p-answer));
+		(ep-p), (p-answer));
       return -(EAI_FAIL);
     }
     p += i;
@@ -347,7 +346,7 @@ FILE *vlog;
 	    return -(EAI_FAIL);
 	  }
 
-	  *pat = (void*)malloc(sizeof(struct gaih_addrtuple));
+	  *pat = malloc(sizeof(struct gaih_addrtuple));
 	  if (*pat == NULL)
 	    return -(EAI_MEMORY);
 	  memset(*pat, 0, sizeof(struct gaih_addrtuple));
@@ -362,7 +361,7 @@ FILE *vlog;
 	    return -(EAI_FAIL);
 	  }
 
-	  *pat = (void*)malloc(sizeof(struct gaih_addrtuple));
+	  *pat = malloc(sizeof(struct gaih_addrtuple));
 	  if (*pat == NULL)
 	    return -(EAI_MEMORY);
 	  memset(*pat, 0, sizeof(struct gaih_addrtuple));
@@ -377,12 +376,11 @@ FILE *vlog;
       }
       memcpy((*pat)->addr, p, i);
     
-      if (req->ai_flags & AI_CANONNAME) {
+      if (req->ai_flags & AI_CANONNAME)
 	if (prevcname && !strcmp(prevcname, dn))
 	  (*pat)->cname = prevcname;
 	else
 	  prevcname = (*pat)->cname = strdup(dn);
-      }
     }
     p += i;
   }
@@ -425,7 +423,7 @@ FILE *vlog;
   newsize  = sizeof(struct addrinfo) + sizeof(struct sockaddr_un);
   newsize += ((req->ai_flags & AI_CANONNAME) ?
 	      (strlen(utsname.nodename) + 1): 0);
-  *pai = (void*)malloc(newsize);
+  *pai = malloc(newsize);
   if (*pai == NULL)
     return -(EAI_MEMORY);
 
@@ -490,7 +488,7 @@ struct gaih_servtuple **st;
   if (s == NULL)
     return (GAIH_OKIFUNSPEC | -(EAI_SERVICE));
 
-  *st = (void*)malloc(sizeof(struct gaih_servtuple));
+  *st = malloc(sizeof(struct gaih_servtuple));
   if (*st == NULL)
     return -(EAI_MEMORY);
 
@@ -523,12 +521,11 @@ FILE *vlog;
     for (tp++; tp->name &&
 	   ((req->ai_socktype != tp->socktype) || !req->ai_socktype) && 
 	   ((req->ai_protocol != tp->protocol) || !req->ai_protocol); tp++);
-    if (!tp->name) {
+    if (!tp->name)
       if (req->ai_socktype)
 	return (GAIH_OKIFUNSPEC | -(EAI_SOCKTYPE));
       else
 	return (GAIH_OKIFUNSPEC | -(EAI_SERVICE));
-    }
   }
 
   if (service) {
@@ -554,7 +551,7 @@ FILE *vlog;
 	}
       }
     } else {
-      st = (void*)malloc(sizeof(struct gaih_servtuple));
+      st = malloc(sizeof(struct gaih_servtuple));
       if (st == NULL)
 	return -(EAI_MEMORY);
 
@@ -566,7 +563,7 @@ FILE *vlog;
   }
 
   if (!name) {
-    at = (void*)malloc(sizeof(struct gaih_addrtuple));
+    at = malloc(sizeof(struct gaih_addrtuple));
     if (at == NULL) {
       i = -(EAI_MEMORY);
       goto ret;
@@ -575,7 +572,7 @@ FILE *vlog;
     memset(at, 0, sizeof(struct gaih_addrtuple));
 
 #if defined(INET6) && defined(AF_INET6)
-    at->next = (void*)malloc(sizeof(struct gaih_addrtuple));
+    at->next = malloc(sizeof(struct gaih_addrtuple));
     if (at->next == NULL) {
       i = -(EAI_MEMORY);
       goto ret;
@@ -595,7 +592,7 @@ FILE *vlog;
   if (!req->ai_family || (req->ai_family == AF_INET)) {
     struct in_addr in_addr;
     if (inet_pton(AF_INET, name, (void*)&in_addr) > 0) {
-      at = (void*)malloc(sizeof(struct gaih_addrtuple));
+      at = malloc(sizeof(struct gaih_addrtuple));
       if (at == NULL)
 	return -(EAI_MEMORY);
       
@@ -611,7 +608,7 @@ FILE *vlog;
   if (!req->ai_family || (req->ai_family == AF_INET6)) {
     struct in6_addr in6_addr;
     if (inet_pton(AF_INET6, name, (void*)&in6_addr) > 0) {
-      if (!(at = (void*)malloc(sizeof(struct gaih_addrtuple))))
+      if (!(at = malloc(sizeof(struct gaih_addrtuple))))
 	return -(EAI_MEMORY);
       
       memset(at, 0, sizeof(struct gaih_addrtuple));
@@ -686,7 +683,7 @@ build:
       st2 = st;
       while (st2) {
 
-	*pai = (void*)malloc(sizeof(struct addrinfo) + i + j);
+	*pai = malloc(sizeof(struct addrinfo) + i + j);
 	if (*pai == NULL) {
 	  i = -(EAI_MEMORY);
 	  goto ret;
@@ -704,7 +701,7 @@ build:
 	if (at2->family == AF_INET6) {
 	  struct sockaddr_in6 *si6;
 	  si6 = (struct sockaddr_in6 *) (*pai)->ai_addr;
-#ifdef HAVE_SA_LEN
+#if HAVE_SA_LEN
 	  si6->sin6_len      = i;
 #endif /* SALEN */
 	  si6->sin6_family   = at2->family;
@@ -716,7 +713,7 @@ build:
 	  {
 	    struct sockaddr_in  *si4;
 	    si4 = (struct sockaddr_in *) (*pai)->ai_addr;
-#ifdef HAVE_SA_LEN
+#if HAVE_SA_LEN
 	    si4->sin_len     = i;
 #endif /* SALEN */
 	    si4->sin_family  = at2->family;
@@ -805,7 +802,7 @@ FILE *vlog;
   if (service && (service[0] == '*') && !service[1])
     service = NULL;
 
-#ifdef BROKEN_LIKE_POSIX
+#if BROKEN_LIKE_POSIX
   if (!name && !service)
     return EAI_NONAME;
 #endif /* BROKEN_LIKE_POSIX */
@@ -816,7 +813,7 @@ FILE *vlog;
   if (req->ai_flags & ~(AI_CANONNAME | AI_PASSIVE | AI_NONAME))
     return EAI_BADFLAGS;
 
-#ifdef BROKEN_LIKE_POSIX
+#if BROKEN_LIKE_POSIX
   if ((req->ai_flags & AI_CANONNAME) && !name)
     return EAI_BADFLAGS;
 #endif
@@ -827,7 +824,7 @@ FILE *vlog;
     gaih_service.num = strtoul(service, &c, 10);
     if (*c)
       gaih_service.num = -1;
-#ifdef BROKEN_LIKE_POSIX
+#if BROKEN_LIKE_POSIX
     else
       if (!req->ai_socktype)
 	return EAI_SERVICE;

@@ -13,10 +13,6 @@
 
 #include <sys/types.h>
 
-#ifndef __STDC__
-#define const /* no const withot ANSI-C ?? */
-#endif
-
 int
 strmatch(pattern, term)
 	register const char	*pattern, *term;

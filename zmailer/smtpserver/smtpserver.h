@@ -15,11 +15,6 @@
  * argument is a keyword for what we want done.  These are the definitions:
  */
 
-#ifndef __STDC__
-# define const
-# define volatile
-#endif
-
 #define	ROUTER_SERVER	"server"	/* name of portal function */
 
 #define	RKEY_INIT	"init"		/* initialize state of server	*/
@@ -32,6 +27,9 @@
 #define SMTPLINESIZE	8192
 
 #include "hostenv.h"
+#ifdef HAVE_RESOLVER
+#define USE_INET
+#endif
 #include <stdio.h>
 #include "malloc.h"
 #include <sys/types.h>
@@ -49,8 +47,6 @@
 #else
 #include <varargs.h>		/* If no  <stdarg.h>,  then presume <varargs.h> ... */
 #endif
-
-#include <arpa/inet.h>
 
 #include "mail.h"
 
@@ -100,7 +96,6 @@ extern int wait();
 #include "zsyslog.h"
 
 
-#ifndef __Usockaddr__
 typedef union {
     struct sockaddr_in v4;
 #ifdef INET6
@@ -108,7 +103,7 @@ typedef union {
 #endif
 } Usockaddr;
 #define __Usockaddr__
-#endif
+  
 
 
 #include "policytest.h"
@@ -174,11 +169,6 @@ typedef struct {
     char helobuf[SMTPLINESIZE];
     struct smtpconf *cfinfo;
 
-#ifdef HAVE_WHOSON_H
-    int whoson_result;
-    char whoson_data[128];
-#endif
-
 } SmtpState;
 
 #define STYLE(i,c)	(strchr(((i)==NULL ? style : (i)->flags), (c)) != NULL)
@@ -189,8 +179,6 @@ typedef struct {
 
 #define HELPMAX 40
 extern char *helplines[];
-#define HDR220MAX 4
-extern char *hdr220lines[];
 
 extern long availspace;
 extern long maxsize;
@@ -205,7 +193,6 @@ extern int allow_source_route;
 extern int debugcmdok;
 extern int expncmdok;
 extern int vrfycmdok;
-extern int strict_protocol;
 
 extern const char *progname;
 extern int debug, skeptical, checkhelo, ident_flag, verbose;
@@ -245,27 +232,10 @@ extern int router_status;
 
 extern const char *m200;
 extern const char *m400;
-extern const char *m410;
-extern const char *m412;
-extern const char *m413;
-extern const char *m415;
-extern const char *m417;
-extern const char *m418;
 extern const char *m430;
-extern const char *m431;
-extern const char *m433;
-extern const char *m443;
 extern const char *m454;
 extern const char *m471;
-extern const char *m510;
-extern const char *m512;
-extern const char *m513;
-extern const char *m515;
-extern const char *m517;
-extern const char *m518;
-extern const char *m534;
 extern const char *m540;
-extern const char *m543;
 extern const char *m550;
 extern const char *m551;
 extern const char *m552;
@@ -344,7 +314,7 @@ extern int  smtp_bdata  __((SmtpState * SS, const char *buf, const char *cp));
 extern void add_to_toplevels __((char *str));
 
 #ifdef HAVE_TCPD_H		/* The hall-mark of having tcp-wrapper things around */
-extern int wantconn __((int sock, char *prgname));
+extern int wantconn __((int sock, char *progname));
 #endif
 extern char *rfc822date __((time_t *));
 

@@ -47,7 +47,6 @@
 #include "ta.h"
 #include "malloc.h"
 #include "libz.h"
-#include "libc.h"
 
 #if	defined(TRY_AGAIN) && defined(HAVE_RESOLVER)
 #define	BIND		/* Want BIND (named) nameserver support enabled */
@@ -69,10 +68,6 @@
 #endif	/* GETLONG */
 #endif	/* !BIND_VER */
 #endif	/* BIND */
-
-#ifndef	T_TXT
-# define T_TXT 16	/* Text strings */
-#endif
 
 extern int h_errno;
 extern int res_mkquery(), res_send(), dn_skipname(), dn_expand();
@@ -120,11 +115,11 @@ dnsmxlookup(host, depth, mxmode, qtype)
 
 	if (debug) {
 	  if (qtype == T_TXT)
-	    printf("000- TXT-lookup for domain: '%s'\n", host);
+	    printf("TXT-lookup for domain: '%s'\n", host);
 	  else if (mxmode)
-	    printf("000- MX-Verify: Look MX for host '%s'\n", host);
+	    printf("MX-Verify: Look MX for host '%s'\n", host);
 	  else
-	    printf("000- DNS-Verify: Look MX, or Addr for host '%s'\n", host);
+	    printf("DNS-Verify: Look MX, or Addr for host '%s'\n", host);
 	}
 
 	qlen = res_mkquery(QUERY, host, C_IN, qtype, NULL, 0, NULL,
@@ -236,26 +231,26 @@ dnsmxlookup(host, depth, mxmode, qtype)
 	    i = _getaddrinfo_((const char*)buf, "0", &req, &ai,
 			      debug ? stdout : NULL);
 	    if (debug)
-	      printf("000-  getaddrinfo('%s','0') -> r=%d, ai=%p\n",buf,i,ai);
+	      printf("  getaddrinfo('%s','0') -> r=%d, ai=%p\n",buf,i,ai);
 #endif
 
 	    if (debug)
-	      printf("000-  getaddrinfo('%s') yields %d\n", buf, i);
+	      printf("  getaddrinfo('%s') yields %d\n", buf, i);
 	    
 	    if (i != 0)
 	      continue;		/* Well well.. spurious! */
 
 	    if (!mxmode) /* Accept if found ANYTHING! */ {
-	      if (debug) printf("000-  ... accepted!\n");
+	      if (debug) printf("  ... accepted!\n");
 	      freeaddrinfo(ai);
 	      return 1;
 	    }
 	  
 	    {
 	      struct addrinfo *ai2 = ai;
-	      int k = 1, rc;
+	      int i = 1, rc;
 	    
-	      for ( ; ai2 != NULL; ai2 = ai2->ai_next, ++k ) {
+	      for ( ; ai2 != NULL; ai2 = ai2->ai_next, ++i ) {
 #if 0
 		if (debug) {
 		  struct sockaddr * sa = ai2->ai_addr;
@@ -278,15 +273,15 @@ dnsmxlookup(host, depth, mxmode, qtype)
 		rc = matchmyaddress(ai2->ai_addr);
 		if (rc == 1) {
 		  if (debug)
-		    printf("000-   ADDRESS MATCH!\n");
+		    printf("  ADDRESS MATCH!\n");
 		  freeaddrinfo(ai);
 		  return 1; /* Found a match! */
 		} else
 		  if (debug)
-		    printf("000-   matchmyaddress() yields: %d\n", rc);
+		    printf("  matchmyaddress() yields: %d\n", rc);
 	      }
 	      if (debug)
-		printf("000-   No address match among %d address!\n",i);
+		printf("  No address match among %d address!\n",i);
 	    }
 	    freeaddrinfo(ai);
 	    had_mx_record = 1;
@@ -329,7 +324,7 @@ perhaps_address_record:
 	  i = _getaddrinfo_((const char*)host, "0", &req, &ai, debug ? stdout : NULL);
 #endif
 	  if (debug)
-	    printf("000-   getaddrinfo('%s','0') -> r=%d, ai=%p\n",host,i,ai);
+	    printf("  getaddrinfo('%s','0') -> r=%d, ai=%p\n",host,i,ai);
 	  if (i != 0) /* Found nothing! */
 	    return 0;
 
@@ -367,7 +362,7 @@ perhaps_address_record:
 
 int mx_client_verify(retmode, domain, alen)
      int retmode, alen;
-     const char *domain;
+     char *domain;
 {
 	char hbuf[2000];
 	int rc;
@@ -401,7 +396,7 @@ int mx_client_verify(retmode, domain, alen)
 
 int sender_dns_verify(retmode, domain, alen)
      int retmode, alen;
-     const char *domain;
+     char *domain;
 {
 	char hbuf[2000];
 	int rc;
@@ -435,7 +430,7 @@ int sender_dns_verify(retmode, domain, alen)
 
 int client_dns_verify(retmode, domain, alen)
      int retmode, alen;
-     const char *domain;
+     char *domain;
 {
 	return sender_dns_verify(retmode, domain, alen);
 }
@@ -451,14 +446,14 @@ int rbl_dns_test(ipv4addr, msgp)
 		 ipv4addr[3], ipv4addr[2], ipv4addr[1], ipv4addr[0]);
 
 	if (debug)
-	  printf("000- looking up DNS A object: %s\n", hbuf);
+	  printf("looking up DNS A object: %s\n", hbuf);
 
 	if (gethostbyname(hbuf) != NULL) {
 	  /* XX: Should verify that the named object has A record: 127.0.0.2 */
 
 	  /* Ok, then lookup for the TXT entry too! */
 	  if (debug)
-	    printf("000- looking up DNS TXT object: %s\n", hbuf);
+	    printf("looking up DNS TXT object: %s\n", hbuf);
 
 	  if (dnsmxlookup(hbuf, 0, 0, T_TXT) == 1) {
 	    if (*msgp != NULL)

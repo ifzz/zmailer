@@ -13,9 +13,7 @@
 
 extern int getmyhostname();
 extern char *getzenv();
-#ifndef strdup
 extern char *strdup();
-#endif
 
 char *
 mydomain()

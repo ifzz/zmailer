@@ -21,7 +21,7 @@ emalloc(len)
 	while ((r = malloc(len)) == NULL) {
 		fprintf(stderr,
 			"%s[%d]: malloc(%u): virtual memory exceeded, sleeping\n",
-			progname, (int)getpid(), (u_int)len);
+			progname, getpid(), len);
 		sleep(emsleeptime);
 	}
 	embytes += len;
@@ -39,7 +39,7 @@ erealloc(buf, len)
 	while ((r = realloc(buf, len)) == NULL) {
 		fprintf(stderr,
 			"%s[%d] realloc(%u): virtual memory exceeded, sleeping\n",
-			progname, (int)getpid(), (u_int)len);
+			progname, getpid(), len);
 		sleep(emsleeptime);
 	}
 	return r;

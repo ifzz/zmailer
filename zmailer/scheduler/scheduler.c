@@ -22,7 +22,6 @@
 #include "mail.h"
 #include <string.h>
 #include "ta.h"
-#include "sysexits.h"
 
 #ifdef HAVE_UNISTD_H
 #include <unistd.h>
@@ -51,7 +50,6 @@
 #include "prototypes.h"
 #include "zsyslog.h"
 #include "libz.h"
-#include <grp.h>
 
 extern int optind;
 extern char *optarg;
@@ -120,7 +118,6 @@ char * procselect = NULL;	/* Non-null defines  channel/host specifier
 				   job-specifier deletions. */
 char * procselhost = NULL;	/* Just spliced out 'host'-part of the above */
 extern int forkrate_limit;	/* How many forks per second ? */
-int	mailqmode = 1;		/* ZMailer v1.0 mode on mailq */
 
 static int vtxprep_skip      = 0;
 static int vtxprep_skip_any  = 0;
@@ -129,7 +126,6 @@ static time_t next_dirscan     = 0;
 static time_t next_idlecleanup = 0;
 static struct sptree *dirscan_mesh = NULL;
 static int newents_limit = 200;
-extern int never_full_content; /* on conf.c */
 
 #include "memtypes.h"
 extern memtypes stickymem;
@@ -392,7 +388,7 @@ main(argc, argv)
 	verbose = errflg = version = 0;
 	for (;;) {
 		c = getopt(argc, (char*const*)argv,
-			   "divE:f:Fl:HL:M:nN:p:P:q:QR:SVW");
+			   "divE:f:Fl:HL:N:p:P:q:QR:SVW");
 		if (c == EOF)
 		  break;
 		switch (c) {
@@ -426,16 +422,6 @@ main(argc, argv)
 			break;
 		case 'L':	/* override default log file */
 			logfn = optarg;
-			break;
-		case 'M':
-			mailqmode = atoi(optarg);
-			if (mailqmode < 1 || mailqmode > 2) {
-			  fprintf(stderr,"scheduler: -M parameter is either 1, or 2\n");
-			  exit(EX_USAGE);
-			}
-			break;
-		case 'n':
-			never_full_content = !never_full_content;
 			break;
 		case 'N':
 			if ((transportmaxnofiles = atoi(optarg)) < 10)
@@ -495,7 +481,7 @@ main(argc, argv)
 
 	if (errflg) {
 	  fprintf(stderr,
-		  "Usage: %s [-dHisvV -M (1|2) -f configfile -L logfile -P postoffice -Q rendezvous]\n",
+		  "Usage: %s [-dHisvV -f configfile -L logfile -P postoffice -Q rendezvous]\n",
 		  progname);
 	  exit(128+errflg);
 	}
@@ -581,7 +567,7 @@ main(argc, argv)
 	  detach();		/* leave worldy matters behind */
 	  mytime(&now);
 	  printf("%s: scheduler daemon (%s)\n\tpid %d started at %s\n",
-		 progname, Version, (int)getpid(), (char *)rfc822date(&now));
+		 progname, Version, getpid(), (char *)rfc822date(&now));
 	}
 	/* Actually we want this to act as daemon,
 	   even when not in daemon mode.. */

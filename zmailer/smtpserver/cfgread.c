@@ -38,19 +38,10 @@ char *str;
 	while (helplines[i] != NULL && i < helpmax)
 	    ++i;
 	param2 = strchr(str, '\n');
-	if (param2) *param2 = 0;
+	if (param2)
+	    *param2 = 0;
 	helplines[i] = strdup(str);
 	helplines[i + 1] = NULL;	/* This will always stay within the array... */
-	return;
-    }
-    if (cistrcmp(name, "hdr220") == 0) {
-	int i = 0, hdrmax = HDR220MAX;
-	while (hdr220lines[i] != NULL && i < hdrmax)
-	  ++i;
-	param2 = strchr(str, '\n');
-	if (param2) *param2 = 0;
-	hdr220lines[i] = strdup(str);
-	hdr220lines[i+1] = NULL;
 	return;
     }
 
@@ -201,9 +192,9 @@ const char *h;
     int c;
 
 #ifndef	USE_ALLOCA
-    cp = (char*)emalloc(strlen(h) + 1);
+    cp = emalloc(strlen(h) + 1);
 #else
-    cp = (char*)alloca(strlen(h) + 1);
+    cp = alloca(strlen(h) + 1);
 #endif
     for (s = cp; *h != '\0'; ++h) {
 	c = (*h) & 0xFF;

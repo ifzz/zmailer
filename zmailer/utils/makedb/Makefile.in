@@ -13,7 +13,7 @@ CPPDEP=		@CPPDEP@
 MAILBIN=	$(prefix)@MAILBIN@
 DEFS=		@DEFS@
 INSTALL=	@INSTALL@
-CFLAGS=		$(COPTS) $(CPPFLAGS) $(DEFS) @GENINCL@ $(INCL)
+CFLAGS=		$(COPTS) $(CPPFLAGS) $(DEFS) $(INCL)
 TOPDIR=		../..
 INCL=		-I$(srcdir)/$(TOPDIR)/include -I$(TOPDIR)/include -I$(TOPDIR)
 
@@ -42,10 +42,9 @@ distclean: clean
 	-rm -f Makefile
 
 install:
-	@for x in $(PROGS) ; do \
-	   $(INSTALL) -m 0755 $$x $(MAILBIN)/$$x.x; \
-	   mv $(MAILBIN)/$$x.x $(MAILBIN)/$$x; \
-	 done
+	for x in $(PROGS) ; do \
+	$(INSTALL) -m 0755 $$x $(MAILBIN)/$$x.x; \
+	mv $(MAILBIN)/$$x.x $(MAILBIN)/$$x; done
 
 depend:
 	$(TOPDIR)/bin/mkdep $(CFLAGS) $(SOURCE)

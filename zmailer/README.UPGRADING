@@ -13,10 +13,6 @@
 	are important, naturally!
 
 	ZMailer-2.99.50
-		The router script language no longer has 'setf' function.
-		Script usage of 'setf' have been replaced with 'lappend',
-		and 'lreplace'.
-
 		The router script language no longer understands "sift"
 		contruction.  It has been replaced with two new ones:
 			- "ssift" / "tfiss": StringSIFT
@@ -26,28 +22,12 @@
 		(To be precise, "sift" is recognized, but reported with
 		 an error message...)
 
-		The router script language no longer has setf() either!
-		This requires a bit changes into the scripts, most of
-		which are simply changeing complex expressions with
-		setf() into simpler ones with lappend(), or lreplace()
-
 		The "mailbox" will not anymore do BLIND canonicalization
 		of destination username for internal uses; this is for
 		systems where getpwnam() can return data which has different
 		value in pw_name field, than that used for looking it up.
 		Canonicalization happens when option -C is used in mailbox
 		channel.
-
-		The "sm" driven transport agens in BSMTP mode need now
-		explicite "H" flag to start the datasets with HELO/EHLO.
-
-		MAKE SURE that you have up-to-date versions of files:
-			utils/policy-builder.sh
-			proto/db/smtp-policy.src
-		and	proto/db/smtp-policy.relay
-		in your system!  The relaying control got a bit stricter,
-		and as such the default non-overwrite of pre-existing
-		files may now in fact hurt you...
 
 	ZMailer-2.99.49p8:
 		There should not be anything that the system can't handle

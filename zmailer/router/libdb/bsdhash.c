@@ -12,11 +12,7 @@
 #ifdef HAVE_FCNTL_H
 # include <fcntl.h>
 #endif
-#ifdef HAVE_DB_185_H
-# include <db_185.h>
-#else
-# include <db.h>
-#endif
+#include <db.h>
 #include <sys/file.h>
 #include "search.h"
 #include "io.h"
@@ -63,7 +59,7 @@ open_bhash(sip, flag, comment)
 	int flag;
 	const char *comment;
 {
-	DB *db = NULL;
+	DB *db;
 	struct spblk *spl;
 	spkey_t symid;
 	int i;
@@ -109,7 +105,9 @@ search_bhash(sip)
 	DB *db;
 	DBT val, key;
 	conscell *tmp;
+	struct spblk *spl;
 	int retry, rc;
+	spkey_t symid;
 	char *us;
 
 	retry = 0;
@@ -118,7 +116,7 @@ reopen:
 	if (db == NULL)
 	  return NULL; /* Huh! */
 
-	key.data = (void*)sip->key;
+	key.data = (char*)sip->key;
 	key.size = strlen(sip->key) + 1;
 	rc = (db->get)(db, &key, &val, 0);
 	if (rc != 0) {
@@ -150,9 +148,9 @@ add_bhash(sip, value)
 	db = open_bhash(sip, O_RDWR, "add_bhash");
 	if (db == NULL)
 		return EOF;
-	key.data = (void*)sip->key;
+	key.data = (char*)sip->key;
 	key.size = strlen(sip->key) + 1;
-	val.data = (void*)value;
+	val.data = (char*)value;
 	val.size = strlen(value)+1;
 	rc = (db->put)(db, &key, &val, 0);
 	if (rc < 0) {
@@ -180,7 +178,7 @@ remove_bhash(sip)
 	db = open_bhash(sip, O_RDWR, "remove_bhash");
 	if (db == NULL)
 		return EOF;
-	key.data = (void*)sip->key;
+	key.data = (char*)sip->key;
 	key.size = strlen(sip->key) + 1;
 	rc = (db->del)(db, &key, 0);
 	if (rc < 0) {
@@ -310,7 +308,7 @@ modp_bhash(sip)
 	} else
 		rval = 0;
 	sp_install(symid, (void *)((long)stbuf.st_mtime),
-		   (long)stbuf.st_nlink, spt_modcheck);
+		   stbuf.st_nlink, spt_modcheck);
 	return rval;
 }
 #endif	/* HAVE_DB */

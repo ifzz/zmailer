@@ -24,6 +24,8 @@ if [ -z "$localprotocols" ]; then
 	localprotocols="include aliases mboxmap lists uid_trap punthost local"
 fi
 
+do_aliases=1
+
 #
 # These call functions with names:
 #	expand_include, expand_aliases, expand_mboxmap, expand_lists
@@ -35,86 +37,25 @@ fi
 provide aliases
 
 #
-# Define the 'Sendmail-like' aliases database mechanism
+# Define the 'Sendmail-like' aliases database
 # 
 
-if [ -f $MAILVAR/db/aliases.zmsh ]; then
-
-    # If that file exists, it contains scripts defining our databases
-    # at load-in time (relation entries), and also runtime callable
-    # entrypoint  aliases(uname) { ... }  which "return 1" in case no
-    # lookup succeeds.  It yields the first lookup result that succeeded.
-    # Also, successfull lookup must yield file privileges of the database
-    # file where the lookup was done.  The return is done to a "priv"
-    # variable which has local scope in the caller's symbol stack.
-
-    . $MAILVAR/db/aliases.zmsh
-
-else
-    if [ -f $MAILVAR/db/aliases ]; then
+if [ -f $MAILVAR/db/aliases ]; then
 	# Need to be updated at boot ?
 	if [ ! -f $MAILVAR/db/aliases$DBEXTtest -o \
 	     $MAILVAR/db/aliases -nt $MAILVAR/db/aliases$DBEXTtest ]; then
 		# Yes, so update!
-		$MAILBIN/newdb -l -a $MAILVAR/db/aliases
+		$MAILBIN/zmailer newaliases
 	fi
-# ---- raw relation entry
-	relation -lmt $DBTYPE -f $MAILVAR/db/aliases$DBEXT aliasesdb
-# ---- interface function
-	aliases(key) {
-		local a
-		if a="$(aliasesdb "$key")"; then
-		  priv="$(filepriv -M 644 $MAILVAR/db/aliases$DBEXTtest \
-					$(db owner aliasesdb))" &&
-		  return "$a"
-		fi
-		return 1
-	}
-    else
+	relation -lmt $DBTYPE -f $MAILVAR/db/aliases$DBEXT aliases
+else
 	aliases () { return 1 }
-    fi
 fi
 
 # If the 'm' option was NOT specified on the aliases relation,
 # presumably whatever creates new aliases will poke us (using SIGURG).
 
 trap "db flush aliases ; log flushed aliases" 16
-
-
-#
-# Safeguard if fullnamemapdb() is not yet created (as part of aliases()?)
-#
-case "$(type fullnamemapdb)" in
-*"not found")
-
-    # optional: Fullname database: <Full_Name>    <login>
-
-    if [ -f $MAILVAR/db/fullnames$DBEXTtest  ]; then
-	relation -lmt $DBTYPE -f $MAILVAR/db/fullnames$DBEXT fullnamemapdb
-	fullnamemap (key) {
-	    local a;
-	    if a="$(fullnamemapdb "$key")" ; then
-		# "priv" analysis ???
-		return "$a"
-	    fi
-	    return 1
-	}
-    else
-	fullnamemap () { return 1 }
-    fi
-
-    ;;
-
-*)  # Can be found!
-    case "$(type fullnamemap)" in
-    *"not found")
-	# The DB is there, but not this function, propably as a part of
-	# aliases() database call entry...
-	fullnamemap() { return 1 }
-	;;
-    esac
-    ;;
-esac
 
 # If an mboxmap file exists, only users specified in the mboxmap are
 # recognized, and we want to deliver to them on the host, home directory
@@ -142,64 +83,13 @@ else
        expired () { return 1 }
 fi
 
-#
-# ################################################################
-#
-# This is the main engine for expansion.  This will call
-# $(expand_$method $user $attr) for each method it's given, with a
-# guard against recursion, until it gets an answer.
-#
-# Note the difference between
-#	$(localexpand 'method1' "$user" "$host" "$attr" "$key")
-#	$(localexpand 'method2' "$user" "$host" "$attr" "$key")
-# and
-#	$(localexpand 'method1 method2' "$user" "$host" "$attr" "$key")
-#
-# In the first case, $(method2 foo) can get called recursively while
-# expanding $(method1 foo).  In the second case, $(method2 foo) will
-# not get called recursively while expanding $(method1 foo).
-# XXX Perhaps this distinction is a little too confusing; maybe
-# XXX there's a better way of doing it.
-
-localexpand (method, user, host, attr, key) {
-	local expansion success result
-
-	# This is the key used as a guard.
-	expansion="$@ * $user"
-
-	# A second instance of the same name disappears.
-	# XXX This is not quite the right place to do this.
-	# XXX And expansions should be split into two tables.
-	expansions "finished $expansion" && return ()
-
-	# A recursive instance of the same name gets rejected.
-	expansions "pending $expansion" && return 99
-
-	db add expansions "pending $expansion" 1
-	success=''
-	for method in "$@"; do
-		if result=$(expand_$method "$user" $attr "$origaddr"); then
-			success=yes
-			break
-		fi
-	done
-	db remove expansions "pending $expansion"
-
-	[ $success ] || return 99
-
-	db add expansions "finished $expansion" 1
-	return $result
-}
 
 
-#
-# ################################################################
-#
-#   Usage: routeuser (channel host user attributes)
+# Usage: routeuser (channel host user attributes)
 #
 # This is where local alias expansion is controlled.
 
-routeuser (quad, plustail, domain) {
+routeuser (quad, domain) {
 	local chan user host lcuser mxh al a l
 	local key attr pobox didexpand nattr homedir
 	local plustail plustail2 forward
@@ -216,7 +106,7 @@ routeuser (quad, plustail, domain) {
 
 	# get rid of the attribute tag for alias loop prevention
 	a=$quad
-	##mxh=$(setf $(last $a) ())
+	#mxh=$(setf $(last $a) ())
 
 	# For the expansions control tag we can use only
 	# the 'channel',  and the 'username' strings, we CAN'T
@@ -284,7 +174,7 @@ routeuser (quad, plustail, domain) {
 		;;
 
 	:include:(.+)
-		a=$(expand_include "\1" "$host" "$attr" "$origaddr" "$key") &&
+		a=$(expand_include "\1" "$host" "$attr" "$key") &&
 			return $a
 		;;
 
@@ -306,43 +196,21 @@ routeuser (quad, plustail, domain) {
 		;;
 	tfiss
 
-	for func in $localprotocols; do
-	    if [ -z "$didexpand" ]; then
-		a=$(localexpand "$func" "$user" "$host" "$attr" "$key") &&
-			return $a
-	    fi
-	done
-
-
-# vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv
-#
-#           Below here are many partially unproceduralized tests
-#	    (work continues!), or just plain obsolete open-coded
-#           version of the loop above..
-#
-
-	# ``aliases''
-
-	if [ $do_aliases ]; then
+	if [ $do_aliases -a -z "$didexpand" ]; then
 		a=$(expand_aliases "$user" "$host" "$attr" "$key") &&
 			return $a
 	fi
 
-	# ``expired''
 
 	# Listed in 'expired accounts' database ?
-	[ -z "$PUNTHOST" ] &&
+	[ -z "$PUNTHOST" -a -z "$didexpand" ] &&
 		a=$(expand_expired "$user" "$host" "$attr" "$key") &&
 			return $a
-
-	# ``pobox_host''
 
 # POBOX INTEGRATION MOVE UNFINISHED
 #	[ -z "$didexpand" ] &&
 #	a=$(expand_pobox_host "$user" "$host" "$attr" "$key") && return $a
 
-
-	# ``lists''
 
 	[ -z "$didexpand" ] &&
 	a=$(expand_lists "$user" "$host" "$attr" "$key") && return $a
@@ -479,13 +347,9 @@ routeuser (quad, plustail, domain) {
 }
 
 
-#
-# ################################################################
-#
-
-
 expand_pobox_host(user,host,attr,key) {
 # XXX: UNFINISHED!
+	local pobox
 	pobox="$(mboxmap "$user")" || return 99
 	tsift "$pobox" in
 	([^:]+):([^:]+):(.+)
@@ -643,7 +507,7 @@ expand_include (file,host,attr,key) {
 #
 expand_aliases(user,host,attr,key) {
 	local a priv nattr
-	# aliases() updates 'priv' too..
+
 	a="$(aliases "$user")"		|| return 99
 	db add expansions "$key" alias	|| return 99
 	priv=$(filepriv -M 644 $MAILVAR/db/aliases \

@@ -39,9 +39,7 @@
 #ifdef HAVE_STDLIB_H
 #include <stdlib.h>
 #endif
-#ifdef HAVE_NETDB_H
 #include <netdb.h>
-#endif
 #ifndef EAI_AGAIN
 # include "netdb6.h" /* IPv6 API stuff */
 #endif
@@ -191,10 +189,10 @@ other_socktype:
 
 	  if (ioctl(s, SIOCGIFFLAGS, (char *) &ifrf) < 0)
 	    continue; /* Failed.. */
-#if 0
-	   printf("name='%s'  ifrf_flags=0x%x\n",
-	     ifr->ifr_name,ifrf.ifr_flags);
-#endif
+
+	  /* printf("name='%s'  ifrf_flags=0x%x\n",
+	     ifr->ifr_name,ifrf.ifr_flags); */
+
 	  if (!(IFF_UP & ifrf.ifr_flags))
 	    continue;
 #else
@@ -334,17 +332,17 @@ stashmyaddress(host)
 	}
 	if (myaddrs == NULL) {
 	  nmyaddrs = 0;
-	  myaddrs = (void*)malloc((nmyaddrs + naddrs +1) * sizeof(struct sockaddr*));
+	  myaddrs = malloc((nmyaddrs + naddrs +1) * sizeof(struct sockaddr*));
 	} else
-	  myaddrs = (void*)realloc((void*)myaddrs,
-				   (nmyaddrs + naddrs +1) * sizeof(struct sockaddr*));
+	  myaddrs = realloc(myaddrs,
+			    (nmyaddrs + naddrs +1) * sizeof(struct sockaddr*));
 
 	if (!myaddrs) return; /* Uurgh.... */
 
 	for (hp_init(hp); *hp_getaddr() != NULL; hp_nextaddr()) {
 	  if (hp->h_addrtype == AF_INET) {
 	    struct sockaddr_in *si;
-	    si = (void*)malloc(sizeof(*si));
+	    si = malloc(sizeof(*si));
 	    if (!si) {
 	      return;
 	    }
@@ -356,7 +354,7 @@ stashmyaddress(host)
 #if defined(AF_INET6) && defined(INET6)
 	  if (hp->h_addrtype == AF_INET6) {
 	    struct sockaddr_in6 *si6;
-	    si6 = (void*)malloc(sizeof(*si6));
+	    si6 = malloc(sizeof(*si6));
 	    if (!si6) {
 	      return;
 	    }
@@ -504,7 +502,7 @@ char *argv[];
 #if defined(AF_INET6) && defined(INET6)
     case AF_INET6:
       inet_ntop(AF_INET6, &((struct sockaddr_in6 **) sa)[i]->sin6_addr, buf, sizeof(buf));
-      printf("IPv6: [IPv6:%s]\n",buf);
+      printf("IPv6: [IPv6:%s]\n");
       break;
 #endif
     default:

@@ -56,9 +56,7 @@ extern conscell * s_last     __((conscell *));
 extern int        s_equal1   __((conscell *, conscell *));
 extern int        s_equal    __((conscell *, conscell *));
 extern conscell * s_nth      __((conscell *list, int n));
-#ifdef CONSCELL_PREV
 extern void       s_set_prev __((conscell *prev, conscell *list));
-#endif
 extern void       s_grind    __((conscell *, FILE *));
 extern void       _grind     __((conscell *));
 extern conscell * s_catstring __((conscell *));
@@ -108,7 +106,7 @@ extern int sh_test __((int argc, const char *argv[]));
 extern int  sprung;
 extern int  interrupted;
 extern const char * traps[];
-extern RETSIGTYPE (*orig_handler[]) __((int));
+extern RETSIGTYPE (*orig_handler[])(int);
 extern void trapsnap __((void));
 extern void trap_handler __((int));
 extern int eval __((const char *script, const char *scriptname, const char *savefil, const struct stat *));

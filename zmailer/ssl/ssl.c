@@ -99,8 +99,8 @@ extern int getopt();
 extern int strcmp();
 extern int strlen();
 /* extern int tolower(); */
-/* extern void abort(); */
-/* extern void exit(); */
+extern void abort();
+extern void exit();
 #endif
 
 #ifndef	SELFCONTAINED
@@ -1477,7 +1477,7 @@ void
 LookupKeyword()
 {
 	char *nt;
-	u_int i;
+	int i;
 
 	if (nextToken != tIdent || nextTokenText[0] == '\0')
 		assertionFailure;

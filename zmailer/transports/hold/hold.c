@@ -23,7 +23,6 @@
 #include <netinet/in.h>
 #endif
 #include "ta.h"
-#include "libz.h"
 
 #if	defined(TRY_AGAIN) && defined(HAVE_RESOLVER)
 #define	BIND		/* Want BIND (named) nameserver support enabled */
@@ -129,6 +128,7 @@ extern char **environ;
 #ifndef strchr
 extern char *strchr(), *strrchr();
 #endif
+extern int   ranny();
 
 #ifdef	lint
 #undef	putc

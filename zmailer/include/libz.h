@@ -35,7 +35,6 @@ extern void         cleanenv __((void));
 
 /* detach.c */
 extern void detach __((void));
-extern int  countfds __((void));
 
 /* die.c */
 extern void die __((int status, const char *message));
@@ -89,7 +88,7 @@ extern int  linegetrest   __((void));
 extern long lineoffset    __((FILE *fp));
 
 /* loginit.c */
-extern /* RETSIGTYPE */ int loginit __((int));
+extern int loginit __((int));
 
 /* nobody.c */
 extern int getnobody __((void));
@@ -150,9 +149,6 @@ extern int strmatch __((const char *pattern, const char *term));
 
 /* symbol.c */
 /* include "splay.h" ! */
-
-/* taspoolid.c */
-extern void taspoolid __((char *buf, int len, time_t mtime, const char *fn));
 
 /* token.c */
 #ifdef Z_TOKEN_H

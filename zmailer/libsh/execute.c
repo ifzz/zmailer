@@ -477,7 +477,7 @@ execute(c, caller, oretcode, name)
 		/*
 		 * Go fish
 		 */
-		execvp(av[0], (void**)av);
+		execvp(av[0], (char*const*)av);
 
 		if (!nofork && c->undoio)
 			RUNIO(c->undoio);

@@ -23,8 +23,6 @@
 #include <unistd.h>
 #endif
 #include <errno.h>
-#include "libz.h"
-
 
 #ifdef  HAVE_WAITPID
 # include <sys/wait.h>
@@ -123,7 +121,6 @@ extern int writemimeline __(( struct maildesc *mp, FILE *fp, const char *buf, in
 #define MO_BEDSMTP		0x04000 /* EBSMTP + DSN */
 #define MO_WANTSDATE		0x08000 /* Wants "Date:" -header */
 #define MO_WANTSFROM		0x10000 /* Wants "From:" -header */
-#define MO_BSMTPHELO		0x20000 /* Add HELO/EHLO to the BSMTP */
 
 struct exmapinfo {
 	int	origstatus;
@@ -347,18 +344,17 @@ deliver(dp, mp, startrp, endrp, verboselog)
 	struct rcpt *startrp, *endrp;
 	FILE *verboselog;
 {
-	struct rcpt *rp = NULL;
+	struct rcpt *rp;
 	struct exmapinfo *exp;
 	const char *exs, *exd;
-	int i, j, pid, in[2], out[2], ii = 0;
+	int i, j, pid, in[2], out[2];
 	unsigned int avsize;
-	FILE *tafp = NULL, *errfp = NULL;
-	char *cp = NULL, buf[BUFSIZ], buf2[BUFSIZ];
-	char *ws = NULL;
+	FILE *tafp, *errfp;
+	char *cp, buf[BUFSIZ], buf2[BUFSIZ];
+	char *ws;
 	const char *ds, **av, *s;
 	int status;
-	int content_kind, conversion_prohibited,
-	  convertmode = 0, ascii_clean = 0;
+	int content_kind, conversion_prohibited, convertmode, ascii_clean = 0;
 
 	if (lseek(dp->msgfd, (off_t)(dp->msgbodyoffset), SEEK_SET) < 0L)
 		warning("Cannot seek to message body! (%m)", (char *)NULL);
@@ -380,16 +376,14 @@ deliver(dp, mp, startrp, endrp, verboselog)
 	  else
 	    av[i++] = startrp->addr->link->user;
 	}
-	for (j = 0; mp->argv[j] != NULL; ++j) {
-	  ii = i; if (j == 0) ii = 0;
+	for (j = 1; mp->argv[j] != NULL; ++j) {
 	  while (i+2 >= avsize) {
 	    avsize *= 2;
 	    av = (const char **)erealloc((char *)av,
 					 sizeof av[0] * avsize);
 	  }
 	  if (strchr(mp->argv[j], '$') == 0) {
-	    if (j > 0)
-	      av[i++] = mp->argv[j];
+	    av[i++] = mp->argv[j];
 	    continue;
 	  }
 	  rp = startrp;
@@ -418,17 +412,6 @@ deliver(dp, mp, startrp, endrp, verboselog)
 		  ds = buf2;
 		  rp = rp->next;
 		  break;
-		case '{':
-		  s = ++cp;
-		  while (*cp != 0 && *cp != '}') ++cp;
-		  if (*cp != 0) {
-		    *cp = 0;
-		    ds = getzenv(s);
-		    *cp = '}';
-		  } else {
-		    ds = getzenv(s);
-		  }
-		  break;
 		default:
 		  ds = NULL;
 		  break;
@@ -448,11 +431,10 @@ deliver(dp, mp, startrp, endrp, verboselog)
 		*ws++ = *cp;
 	    }
 	    *ws = '\0';
-	    av[ii] = emalloc((u_int)(strlen(buf)+1));
+	    av[i] = emalloc((u_int)(strlen(buf)+1));
 	    /* not worth freeing this stuff */
-	    strcpy((char*)av[ii], buf);
-	    if (j > 0)
-	      ++i;
+	    strcpy((char*)av[i], buf);
+	    ++i;
 	  } while (rp != startrp && rp != endrp);
 	}
 	av[i] = NULL;
@@ -547,14 +529,12 @@ deliver(dp, mp, startrp, endrp, verboselog)
 
 	if (mp->flags & MO_BSMTP) {
 
-	  if (mp->flags & MO_BSMTPHELO) {
-	    if (mp->flags & MO_BESMTP)
-	      fprintf(tafp,"EHLO %s",myhostname);
-	    else
-	      fprintf(tafp,"HELO %s",myhostname);
-	    if (mp->flags & MO_CRLF) putc('\r',tafp);
-	    putc('\n',tafp);
-	  }
+	  if (mp->flags & MO_BESMTP)
+	    fprintf(tafp,"EHLO %s",myhostname);
+	  else
+	    fprintf(tafp,"HELO %s",myhostname);
+	  if (mp->flags & MO_CRLF) putc('\r',tafp);
+	  putc('\n',tafp);
 
 	  if (strcmp(startrp->addr->link->channel,"error")==0)
 	    fprintf(tafp,"MAIL From:<>");
@@ -675,7 +655,7 @@ deliver(dp, mp, startrp, endrp, verboselog)
 	  if (hdrs) delete_header(startrp, hdrs);
 	  if (strcmp(startrp->addr->link->channel,"error")==0)
 	    uu = "";
-	  append_header(startrp,"Return-Path: <%.999s>", uu);
+	  append_header(startrp,"Return-Path: <%s>", uu);
 	}
 	if (mp->flags & MO_CRLF) {
 	  writeheaders(startrp, tafp, "\r\n", convertmode, maxwidth, NULL);
@@ -1202,7 +1182,6 @@ readsmcf(file, mailer)
 	  case 'n':	m.flags &= ~MO_UNIXFROM;	break;
 	  case 'r':	m.flags |= MO_RFROMFLAG;	break;
 	  case 's':	m.flags |= MO_STRIPQUOTES;	break;
-	  case 'H':     m.flags |= MO_BSMTPHELO;	break;
 	  case 'b':	m.flags |= (MO_BSMTP|MO_HIDDENDOT); break;
 	  case 'B':	if (m.flags & MO_BESMTP) /* -BB */
 			    m.flags |= MO_BEDSMTP;
@@ -1296,6 +1275,7 @@ struct ctldesc *dp;
 	register int i;
 	register int bufferfull;
 	int lastwasnl;
+	off_t mfd_pos;
 	int mfd = dp->msgfd;
 
 /* can we use cache of message body data */

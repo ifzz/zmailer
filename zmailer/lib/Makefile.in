@@ -14,11 +14,11 @@ CPPFLAGS=	@CPPFLAGS@
 DEFS=		@DEFS@
 TOPDIR=	..
 RANLIB=		@RANLIB@
-LIBZ_INCL=	@GENINCL@
+LIBZ_INCL=
 #
 INCL=		-I$(srcdir)/$(TOPDIR)/include -I$(TOPDIR)/include -I$(TOPDIR) -I$(TOPDIR)/router
 
-CFLAGS=		$(COPTS) $(CPPFLAGS) $(DEFS) $(LIBZ_INCL) $(INCL)
+CFLAGS=		$(COPTS) $(CPPFLAGS) $(DEFS) $(INCL) $(LIBZ_INCL)
 #
 OBJS=	esyslib.o stringlib.o rfc822date.o detach.o \
 	killprev.o linebuffer.o loginit.o die.o \

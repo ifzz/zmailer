@@ -39,8 +39,6 @@
 #endif
 #endif	/* HAVE_RESOLVER */
 
-#include <arpa/inet.h>
-
 #include "ta.h"
 
 #define DPRINTF(x)
@@ -566,7 +564,7 @@ getanswer_r(answer, anslen, qname, qtype, result)
 				had_error++;
 				break;
 			}
-#ifdef MULTI_PTRS_ARE_ALIASES
+#if MULTI_PTRS_ARE_ALIASES
 			cp += n;
 			if (!haveanswer)
 				host.h_name = bp;
@@ -629,10 +627,9 @@ getanswer_r(answer, anslen, qname, qtype, result)
 				continue;
 			}
 			if (hap >= &result->h_addr_ptrs[MAXADDRS-1]) {
-				if (!toobig++) {
+				if (!toobig++)
 					DPRINTF(("Too many addresses (%d)\n",
 						 MAXADDRS));
-				}
 				cp += n;
 				continue;
 			}

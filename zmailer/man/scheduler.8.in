@@ -6,7 +6,7 @@ scheduler \- zmailer transport queue scheduler daemon
 .SH SYNOPSIS
 .B scheduler
 [
-.B \-divFHnQSVW
+.B \-divFHQSVW
 ]
 [
 .B \-f
@@ -144,11 +144,6 @@ into given file.  No default value.
 .IP \-N\ \fItransmaxfno\fR
 sets how many filehandles are allocated for the scheduler's started
 children (if the system has adjustable resources.)
-.IP \-n
-Toggles configuration flag 'never_full_content', which defines wether
-the returned delivery reports shall contain original message body as
-well as its headers.  Per default the original message body is sent,
-unless the message sender has used DSN facility to define RET=HDRS.
 .IP \-P\ \fIpostoffice\fR
 specifies an alternate \fIPOSTOFFICE\fR directory.
 .IP \-q\ \fIrendezvous\fR
@@ -705,28 +700,6 @@ This is sufficient information to be able to reconstruct the transport queues
 as seen by the scheduler process, and to find more information than what is
 shown here by actually looking up the message control and data files referred
 to.
-.SH TCP-WRAPPER AND MAILQ
-If the ZMailer system is configured with tcp-wrapper code, then service-id
-"mailq" is looked for all those addresses that are allowed to do
-queries.
-.P
-Usually files
-.IR hosts.allow ,
-and
-.I hosts.deny
-contain following kind of entries:
-.P
-.nf
- .../hosts.allow
- mailq : ALL@1.2.3.0
- smtp-receive: ALL@ALL
-
- .../hosts.deny
- ALL : ALL@ALL
-.fi
-.P
-.I (Do note that smtpserver(8) has also tcp-wrapper support, which becomes
-.I active simultaneously with scheduler's tcp-wrapper code!)
 .SH SIGNALS
 .IP \fBSIGHUP\fR:
 close and reopen the stdout/stderr log file.

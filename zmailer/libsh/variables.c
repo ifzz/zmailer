@@ -206,7 +206,7 @@ v_expand(s, caller, retcode)
 		return newstring(strsave(np));
 
 	case '$':
-		sprintf(np, "%d", (int)getpid());
+		sprintf(np, "%d", getpid());
 		return newstring(strsave(np));
 
 	case '?':
@@ -275,8 +275,7 @@ void
 v_sync(name)
 	const char *name;
 {
-	register unsigned int i;
-	register int hash, j;
+	register int i, hash, j;
 	register const char *cp;
 
 	if (name == NULL)

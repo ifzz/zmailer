@@ -1,7 +1,7 @@
 /*
  *	Copyright 1988 by Rayan S. Zachariassen, all rights reserved.
  *	This will be free software, but only when it is finished.
- *	Some functions Copyright 1991-1998 Matti Aarnio.
+ *	Some functions Copyright 1991-1997 Matti Aarnio.
  */
 
 /*
@@ -101,7 +101,6 @@ extern int nobody;
 extern struct group  *getgrnam __((const char *));
 extern struct passwd *getpwnam __((const char *));
 extern time_t time __((time_t *));
-extern int routerdirloops;
 
 #ifndef strchr
 extern char *strchr(), *strrchr();
@@ -152,7 +151,7 @@ struct shCmd fnctns[] = {
 {	"malcontents",	run_malcontents,NULL,	NULL,	0	},
 #endif	/* CSRIMALLOC */
 /* The rest have been added locally */
-{ NULL, NULL, NULL, NULL, 0 }
+{ 0 }
 };
 
 int		funclevel = 0;
@@ -377,7 +376,6 @@ run_cadr(avl, il)
 	if (il == NULL || STRING(il) || car(il) == NULL)
 		return NULL;
 	/* cdr */
-#ifdef CONSCELL_PREV
 	/* setf preparation */
 	if (cdar(il)) {
 		il->prev = cdar(il)->prev;
@@ -388,11 +386,9 @@ run_cadr(avl, il)
 			il->prev = car(car(il)->prev);
 	}
 	il->pflags = 3;
-#endif
 	car(il) = cdar(il);
 
 	/* car */
-#ifdef CONSCELL_PREV
 	/* setf preparation */
 	if (car(il) == NULL) {
 		if (il->prev) {
@@ -401,12 +397,9 @@ run_cadr(avl, il)
 		}
 		return il;
 	}
-#endif
 	car(il) = copycell(car(il));	/* don't modify malloc'ed memory! */
 	cdar(il) = NULL;
-#ifdef CONSCELL_PREV
 	car(il)->pflags |= 01 | 04;
-#endif
 	return car(il);
 }
 
@@ -420,7 +413,6 @@ run_caddr(avl, il)
 	if (il == NULL || STRING(il) || car(il) == NULL)
 		return NULL;
 	/* cdr */
-#ifdef CONSCELL_PREV
 	/* setf preparation */
 	if (cdar(il)) {
 		il->prev = cdar(il)->prev;
@@ -431,11 +423,9 @@ run_caddr(avl, il)
 			il->prev = car(car(il)->prev);
 	}
 	il->pflags = 3;
-#endif
 	car(il) = cdar(il);
 
 	/* cdr */
-#ifdef CONSCELL_PREV
 	/* setf preparation */
 	if (cdar(il)) {
 		il->prev = cdar(il)->prev;
@@ -446,25 +436,20 @@ run_caddr(avl, il)
 			il->prev = car(car(il)->prev);
 	}
 	il->pflags = 3;
-#endif
 	car(il) = cdar(il);
 
 	/* car */
 	/* setf preparation */
 	if (car(il) == NULL) {
-#ifdef CONSCELL_PREV
 		if (il->prev) {
 			il->prev = cdr(il->prev);
 			il->pflags = 0;
 		}
-#endif
 		return il;
 	}
 	car(il) = copycell(car(il));	/* don't modify malloc'ed memory! */
 	cdar(il) = NULL;
-#ifdef CONSCELL_PREV
 	car(il)->pflags |= 01 | 04;
-#endif
 	return car(il);
 }
 
@@ -478,7 +463,6 @@ run_cadddr(avl, il)
 	if (il == NULL || STRING(il) || car(il) == NULL)
 		return NULL;
 	/* cdr */
-#ifdef CONSCELL_PREV
 	/* setf preparation */
 	if (cdar(il)) {
 		il->prev = cdar(il)->prev;
@@ -489,11 +473,9 @@ run_cadddr(avl, il)
 			il->prev = car(car(il)->prev);
 	}
 	il->pflags = 3;
-#endif
 	car(il) = cdar(il);
 
 	/* cdr */
-#ifdef CONSCELL_PREV
 	/* setf preparation */
 	if (cdar(il)) {
 		il->prev = cdar(il)->prev;
@@ -504,11 +486,9 @@ run_cadddr(avl, il)
 			il->prev = car(car(il)->prev);
 	}
 	il->pflags = 3;
-#endif
 	car(il) = cdar(il);
 
 	/* cdr */
-#ifdef CONSCELL_PREV
 	/* setf preparation */
 	if (cdar(il)) {
 		il->prev = cdar(il)->prev;
@@ -519,25 +499,20 @@ run_cadddr(avl, il)
 			il->prev = car(car(il)->prev);
 	}
 	il->pflags = 3;
-#endif
 	car(il) = cdar(il);
 
 	/* car */
 	/* setf preparation */
 	if (car(il) == NULL) {
-#ifdef CONSCELL_PREV
 		if (il->prev) {
 			il->prev = cdr(il->prev);
 			il->pflags = 0;
 		}
-#endif
 		return il;
 	}
 	car(il) = copycell(car(il));	/* don't modify malloc'ed memory! */
 	cdar(il) = NULL;
-#ifdef CONSCELL_PREV
 	car(il)->pflags |= 01 | 04;
-#endif
 	return car(il);
 }
 
@@ -608,8 +583,8 @@ static int
 decmp(a, b)
      const void *a, *b;
 {
-	register const struct de *aa = (const struct de *)a;
-	register const struct de *bb = (const struct de *)b;
+	register const struct de *aa = (struct de *)a;
+	register const struct de *bb = (struct de *)b;
 
 	return bb->mtime - aa->mtime;
 }
@@ -699,14 +674,12 @@ rd_doit(filename, dirs)
 	     */
 	  }
 	}
-	if (strncmp(filename,"core",4) != 0 &&
-	    (p == NULL || thatpid != router_id)) {
-	  /* Not a core file, and ...
-	     not already in format of 'inode-pid' */
+	if (p == NULL || thatpid != router_id) {
+	  /* Not already in format of 'inode-pid' */
 	  /* If the pid did exist, we do not touch on that file,
 	     on the other hand, we need to rename the file now.. */
 #ifdef	USE_ALLOCA
-	  buf = (char*)alloca(len+16);
+	  buf = alloca(len+16);
 #else
 	  if (blen == 0) {
 	    blen = len+16;
@@ -773,7 +746,7 @@ rd_stability(dirp,dirs)
 		/* Handle only files beginning with number -- plus "core"-
 		   files.. */
 		if (!(dp->d_name[0] >= '0' && dp->d_name[0] <= '9') &&
-		    strncmp(dp->d_name,"core",4) != 0)
+		    strcmp(dp->d_name,"core") != 0)
 			continue;
 
 		/* See that the file is a regular file! */
@@ -824,14 +797,6 @@ rd_stability(dirp,dirs)
 		if (gothup) 
 			dohup(0);
 		did_cnt += rd_doit(nbarray + dearray[deindex].f_name, dirs);
-
-		/* Maybe only process few files out of the low-priority
-		   subdirs, so we can go back and see if any higher-priority
-		   jobs have been created */
-		if ((*dirs) &&
-		    ((routerdirloops) && (routerdirloops == did_cnt)))
-		  break;
-
 	}
 	return did_cnt;
 }
@@ -857,7 +822,7 @@ rd_instability(dirp, dirs)
 		/* Handle only files beginning with number -- plus "core"-
 		   files.. */
 		if (!(dp->d_name[0] >= '0' && dp->d_name[0] <= '9') &&
-		    strncmp(dp->d_name,"core",4) != 0)
+		    strcmp(dp->d_name,"core") != 0)
 			continue;
 
 		/* See that the file is a regular file! */
@@ -866,13 +831,6 @@ rd_instability(dirp, dirs)
 		if (!S_ISREG(statbuf.st_mode)) continue; /* Hmm..  */
 
 		did_cnt += rd_doit(dp->d_name, dirs);
-
-		/* Only process one file out of the low-priority subdirs,
-		   so we can go back and see if any higher-priority
-		   jobs have been created */
-		if (*dirs)
-			break;
-
 	}
 	return did_cnt;
 }
@@ -1027,7 +985,6 @@ run_daemon(argc, argv)
 		close(dirp[i]->dd_fd);
 #endif
 		closedir(dirp[i]);
-		dirp[i] = NULL;
 #endif
 
 		if (mustexit)
@@ -1085,9 +1042,9 @@ run_process(argc, argv)
 		return PERR_USAGE;
 	}
 #ifdef	USE_ALLOCA
-	file = (char*)alloca(strlen(argv[1])+1);
+	file = alloca(strlen(argv[1])+1);
 #else
-	file = (char*)emalloc(strlen(argv[1])+1);
+	file = emalloc(strlen(argv[1])+1);
 #endif
 	strcpy(file, argv[1]);
 
@@ -1360,7 +1317,6 @@ run_listexpand(avl, il)
 	struct address *ap, *aroot = NULL, **atail = &aroot;
 	token822 *t;
 	conscell *al, *alp = NULL, *tmp;
-	conscell *plustail = NULL, *domain = NULL;
 	char *localpart, *origaddr, *attributenam;
 	int c, n, errflag, stuff;
 	volatile int cnt;
@@ -1433,10 +1389,10 @@ run_listexpand(avl, il)
 	tmp = il;
 	for (; tmp != NULL; tmp = cdr(tmp)) ++cnt; /* Count arguments.. */
 
-	if (errflag || cnt < 3 || cnt > 5 ||
+	if (errflag || cnt != 3 ||
 	    !STRING(il) || !STRING(cdr(il)) || !STRING(cddr(il)) ) {
 		fprintf(stderr,
-			"Usage: %s [ -e error-address ] [ -E errors-to-address ] [-p privilege] [ -c comment ] [ -N notarystring ] $attribute $localpart $origaddr [$plustail [$domain]]< /file/path \n",
+			"Usage: %s [ -e error-address ] [ -E errors-to-address ] [-p privilege] [ -c comment ] [ -N notarystring ] $attribute $localpart $origaddr < /file/path \n",
 		car(avl)->string);
 		if (errors_to != olderrors)
 		  free(errors_to);
@@ -1447,12 +1403,6 @@ run_listexpand(avl, il)
 	attributenam = (char*)    (il)->string;
 	localpart    = (char*) cdr(il)->string;
 	origaddr     = (char*) cddr(il)->string;
-	if (cdr(cddr(il))) {
-	  plustail = cdr(cddr(il));
-	  if (cddr(cddr(il)))
-	    domain = cddr(cddr(il));
-	}
-	
 
 	/* We (memory-)leak this stuff for a moment.. (but it is tmalloc()ed)*/
 	e = (struct envelope *)tmalloc(sizeof (struct envelope));
@@ -1686,24 +1636,9 @@ run_listexpand(avl, il)
 		omem = stickymem;
 		/* stickymem = MEM_MALLOC; */
 
-		/* The set of parameters for the rrouter() script
-		   function are:
-		   - address
-		   - origaddress
-		   - Attribute variable name
-		   - plustail
-		   - domain
-		   (The last two were added in June-1998)
-		*/
-
-		l         = newstring(strsave(buf));
-		cdr(l)    = newstring(strsave(origaddr));
-		cddr(l)   = newstring(strsave(s));
-		if (plustail != NULL) {
-		  cdr(cddr(l))  = conststring(plustail->string);
-		  if (domain != NULL)
-		    cddr(cddr(l)) = conststring(domain->string);
-		}
+		l       = newstring(strsave(buf));
+		cdr(l)  = newstring(strsave(origaddr));
+		cddr(l) = newstring(strsave(s));
 		l = ncons(l);
 
 		stickymem = omem;
@@ -1825,6 +1760,77 @@ run_listexpand(avl, il)
 	return al;
 
 } /* end-of: run_listexpand() */
+
+
+#if 0
+/* newattribute()
+#(originally ZMSH script)
+#
+# Usage: newattribute <oldattribute> <key1> <value1> [ <key2> <value2> ] ...
+#
+# Returns a new attribute list symbol with the <keyN> <valueN>
+# attributes added to the contents of the <oldattribute> list.
+#
+#newattribute (oldattribute) {
+#	local a null value
+##echo "newattribute(old=$oldattribute,args=$*)" > /dev/tty
+#	a=$(gensym)
+#	eval $a=\$$oldattribute
+#	while [ "$#" != 0 ];
+#	do
+#		value=$(get $a "$1")
+#		if [ x"$value" != x"$2" ]; then
+#			null=$(setf $(get $a "$1") "$2")
+#		fi
+#		shift ; shift
+#	done
+#	echo "$a"
+#}
+*/
+
+static conscell *
+run_newattribute(avl, il)
+	conscell *avl, *il;
+{
+	conscell *oldattrname, *oldattr;
+	conscell *newname, *newvalue;
+	conscell *newalist = NULL;
+	conscell *d, **dp;
+	char symbuf[20];
+	memtypes omem = stickymem;
+
+	oldattrname = cdar(avl); /* The CDR (next) of the arg list.. */
+	newname = newvalue = NULL;
+	if (oldattrname)
+	  newname = cdr(oldattrname);
+	if (newname)
+	  newvalue = cdr(newname);
+
+	oldattr = NULL;
+	if (oldattrname && STRING(oldattrname))
+	  oldattr = v_find(oldattrname->string);
+
+	if (!oldattr || !newvalue) {
+	USAGE:
+	  return NULL; /* BOO! */
+	}
+
+	stickymem = MEM_MALLOC;
+	newalist = s_copy_tree(cdr(oldattr));
+	dp = & car(newalist);
+	d  = *dp;
+
+ XXX: REGENERATE THE LIST CONTENT
+
+	sprintf(symbuf, gs_name, gensym++);
+	v_set(symbuf,newalist);
+
+	stickymem = omem;
+
+	il = v_find(symbuf);
+	return il;
+} /* end-of: run_newattribute() */
+#endif
 
 
 static int
@@ -2181,9 +2187,9 @@ run_filepriv(argc, argv)
 	} else if (cp == file)	/* root path */
 		++cp;
 #ifdef	USE_ALLOCA
-	dir = (char*)alloca(cp - file + 1);
+	dir = alloca(cp - file + 1);
 #else
-	dir = (char*)emalloc(cp - file + 1);
+	dir = emalloc(cp - file + 1);
 #endif
 	memcpy(dir, file, cp - file);
 	dir[cp - file] = '\0';

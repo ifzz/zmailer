@@ -613,8 +613,8 @@ int strict;
 
     if (*s == 'i' || *s == 'I') {
 	/* Wow! Possibly IPv6 prefix! */
-	if (strncasecmp(s, "IPv6:", 5) == 0 /* ||
-	    strncasecmp(s, "IPv6.", 5) == 0  */  ) {
+	if (cistrncmp(s, "IPv6:", 5) == 0 /* ||
+	    cistrncmp(s, "IPv6.", 5) == 0  */  ) {
 	    p = rfc821_v6dotnum(s + 5, strict);
 	    if (p == s + 5)
 		return s;
@@ -723,18 +723,11 @@ int strict;
 	    return p;
 	rfc821_error_ptr = s;
 	rfc821_error = "RFC821 Domain \"#numbers\" has inadequate count of numbers";
-	return s;	/* Failure, don't advance */
+	return s;		/* Failure, don't advance */
     }
-    allnum = 1;		/* Collect info about all fields being numeric..
-			   To accept  "1302.watstar.waterloo.edu" et.al.
-			   but not something which looks like all numbers.. */
-
-    if (*p == '.') {
-      rfc821_error = "A domain-name does not start with a dot (.)";
-      rfc821_error_ptr = p;
-      return s;
-    }
-
+    allnum = 1;			/* Collect info about all fields being numeric..
+				   To accept  "1302.watstar.waterloo.edu" et.al.
+				   but not something which looks like all numbers.. */
     q = rfc821_name(p, strict, &allnum);
 
     while (p && q > p && *q == '.') {
@@ -779,11 +772,6 @@ int strict;
 	if (*p == 0 || *p == '>')	/* If it terminates here, it is
 					   only the <local-part> */
 	    return p;
-    }
-    if (*p == ':') {
-	rfc821_error_ptr = p;
-	rfc821_error = "Perhaps this should have been a dot (.) instead of colon (:) ?";
-	return s;
     }
     if (*p != '@') {
 	rfc821_error_ptr = p;
@@ -834,7 +822,7 @@ int strict;
     }
     if (q == s) {
 	rfc821_error_ptr = s;
-	rfc821_error = "Had characters unsuitable for an rfc821-string";
+	rfc821_error = "Expected an rfc821_string";
     }
     return q;			/* Advanced or not.. */
 }
@@ -862,13 +850,8 @@ int strict;
 	}
 #endif
 	q = rfc821_string(p, strict);
-	if (q == p) {
-	  if (*q == '@') {
-	    rfc821_error = "Localpart must not end with unquoted dot!";
-	  }
-	  return s;		/* Missing string */
-	}
-	
+	if (q == p)
+	    return s;		/* Missing string */
     }
     return q;
 }
@@ -1001,11 +984,6 @@ int strict;
     }
     if (*p == '@' && (q = rfc821_adl(p, strict)) && (q > p)) {
 	p = q;
-	if (*p == '>' || *p == ' ') {
-	    rfc821_error_ptr = p;
-	    rfc821_error = "No local part before leading @-character ?";
-	    return s;
-	}
 	if (*p != ':') {
 	    rfc821_error_ptr = p;
 	    rfc821_error = "Missing colon (:) from <@xxx:yyy@zzz>";
@@ -1054,12 +1032,12 @@ int strict;
     }
     if (*q == ' ' || *q == '\t') {
 	/* Sometimes sending systems have:  <foo@foo   >, painfull.. */
-	p = q;
-	while (*p == ' ' || *p == '\t') ++p;
+	for (q = q + 1; (*p == ' ' || *p == '\t');)
+	    ++p;
 	/* Ok, copy down the rest of the input, and thus save the day..
 	   Purist would just report an error, but lets be lenient, when
 	   it is fairly easy, and painless to do.. */
-	if (p > q)
+	if (*p == '>')
 	    strcpy(q, p);
     }
     if (*q != '>') {

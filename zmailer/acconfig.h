@@ -150,6 +150,3 @@
 
 /* */
 #undef SVR4_kvm
-
-/* */
-#undef HAVE_WHOSON_H

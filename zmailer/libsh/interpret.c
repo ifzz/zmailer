@@ -780,13 +780,9 @@ assign(sl_lhs, sl_rhs, command)
 	  }
 	  cdr(sl_rhs) = car(l);
 	  s = newstring(strsave(varname));
-#ifdef CONSCELL_PREV
 	  s_set_prev(s, sl_rhs);
-#endif
 	  cdr(s) = sl_rhs;
-#ifdef CONSCELL_PREV
 	  sl_rhs->pflags = 1;	/* cdr(sl_rhs->prev) == sl_rhs */
-#endif
 	  car(l) = s;
 	  l = NIL;
 	  freerhs = 0;
@@ -820,9 +816,7 @@ assign(sl_lhs, sl_rhs, command)
 	  cdr(s)->flags = sl_rhs->flags;
 	  if (LIST(sl_rhs)) {
 	    cadr(s) = car(sl_rhs);
-#ifdef CONSCELL_PREV
 	    s_set_prev(cdr(s), cadr(s));
-#endif
 	    s_free_tree(cdr(sl_rhs));
 	  } else
 	    cdr(s)->string = sl_rhs->string;
@@ -832,13 +826,9 @@ assign(sl_lhs, sl_rhs, command)
 	  l = cdr(s);
 	  tmp = cdr(l);
 	  cdr(l) = NULL;
-#ifdef CONSCELL_PREV
 	  s_set_prev(s, sl_rhs);
-#endif
 	  cdr(s) = sl_rhs;
-#ifdef CONSCELL_PREV
 	  sl_rhs->pflags = 1;	/* cdr(sl_rhs->prev) == sl_rhs */
-#endif
 	  if (sl_rhs_set && cdr(sl_rhs) != NULL) {
 	    s_free_tree(cdr(sl_rhs));
 	    sl_rhs_set = 0;
@@ -1118,7 +1108,7 @@ tsetsubexps(sepp, tre)
 	tregexp *tre;
 {
 	register struct si_retab *sep, *psep;
-	register unsigned int i;
+	register int i;
 
 	for (sep = *sepp, psep = NULL; sep != NULL;
 	     psep = sep, sep = sep->next) {
@@ -1540,17 +1530,13 @@ interpret(Vcode, Veocode, Ventry, caller, retcodep, cdp)
 			if (command->argv == NULL) {
 				command->argv = newcell();
 				command->argv->flags = 0;
-#ifdef CONSCELL_PREV
 				command->argv->pflags = 0;
 				command->argv->prev = NULL;
-#endif
 				cdr(command->argv) = NULL;
 				car(command->argv) = newcell();
 				car(command->argv)->flags = 0;
-#ifdef CONSCELL_PREV
 				car(command->argv)->pflags = 0;
 				car(command->argv)->prev = NULL;
-#endif
 				cdar(command->argv) = NULL;
 				caar(command->argv) = d;
 				cdar(command->argv) = s_last(d);
@@ -1953,11 +1939,9 @@ XXX: HERE! Must copy the output to PREVIOUS memory level, then discard
 				stickytmp = stickymem;
 				stickymem = MEM_MALLOC;
 				if (d != NULL && LIST(d)) {
-				  cdr(d) = NULL;
-				  d = s_copy_tree(d);
-#ifdef CONSCELL_PREV
-				  s_set_prev(d, car(d));
-#endif
+					cdr(d) = NULL;
+					d = s_copy_tree(d);
+					s_set_prev(d, car(d));
 				} else
 				  d = newstring(strsave(name));
 				/* create the variable in the current scope */
@@ -2181,9 +2165,7 @@ XXX: HERE! Must copy the output to PREVIOUS memory level, then discard
 			stickymem = MEM_MALLOC;
 			d = NIL;
 			tmp = conststring(arg1);
-#ifdef CONSCELL_PREV
 			s_set_prev(tmp, d);
-#endif
 			cdr(d) = caar(envarlist);
 			cdr(tmp) = d;
 			caar(envarlist) = tmp;
@@ -2349,8 +2331,7 @@ std_printf("set %x at %d\n", re, cdp->rearray_idx);
 			break;
 		case sSiftBufferAppend:
 			if (sift[nsift].kind == 0) { /* StringSift.. */
-			  if (arg1 == NULL || re == NULL ||
-			      !isdigit((*arg1)&0xFF))
+			  if (arg1 == NULL || re == NULL || !isdigit(*arg1))
 			    break;
 			  if (nsift > 0 && sift[nsift].subexps == NULL)
 			    setsubexps(&sift[nsift-1].subexps, re);
@@ -2365,8 +2346,7 @@ std_printf("set %x at %d\n", re, cdp->rearray_idx);
 			    command->bufferp = &cdr(tmp);
 			  }
 			} else { /* TokenSift */
-			  if (arg1 == NULL || tre == NULL ||
-			      !isdigit((*arg1)&0xFF))
+			  if (arg1 == NULL || tre == NULL || !isdigit(*arg1))
 			    break;
 			  if (nsift > 0 && sift[nsift].subexps == NULL)
 			    tsetsubexps(&sift[nsift-1].subexps, tre);

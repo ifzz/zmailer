@@ -4,14 +4,12 @@
  */
 /*
  *    Several extensive changes by Matti Aarnio <mea@nic.funet.fi>
- *      Copyright 1991-1998.
+ *      Copyright 1991-1997.
  */
 
 /*
  * ZMailer SMTP server.
  */
-
-#include "smtpserver.h"
 
 const char *VerbID = "ZMailer SMTP server %s";
 const char *Copyright = "Copyright 1990 Rayan S. Zachariassen";
@@ -19,15 +17,12 @@ const char *Copyright2 = "Copyright 1991-1997 Matti Aarnio";
 
 /* Timing parameters -- when expired, session is killed ... */
 
+#include "smtpserver.h"
 
 #include "identuser.h"
 #ifdef USE_TRANSLATION
 #include "libtrans.h"
 #endif				/* USE_TRANSLATION */
-
-#ifdef HAVE_WHOSON_H
-#include <whoson.h>
-#endif
 
 /*
  * Early inetd's, which may be found on 4.2BSD based systems (e.g.
@@ -95,7 +90,6 @@ int skeptical = 1;
 int checkhelo = 0;
 int verbose = 0;
 int daemon_flg = 1;
-int netconnected_flg = 0;
 int pid, routerpid = -1;
 int router_status = 0;
 FILE *logfp = NULL;
@@ -106,28 +100,20 @@ int X_translation = 0;
 int X_8bit = 0;
 int X_settrrc = 9;
 #endif				/* USE_TRANSLATION */
-int strict_protocol = 0;
 
 jmp_buf jmpalarm;		/* Return-frame for breaking smtpserver
 				   when timeout hits.. */
 
 
-char *helplines[HELPMAX + 2] = {NULL,};
-char *hdr220lines[HDR220MAX + 2] = {NULL, };
-
+char *helplines[HELPMAX + 2] =
+{NULL,};
 
 const char *m200 = "2.0.0";
 const char *m400 = "4.0.0";
 const char *m430 = "4.3.0";
-const char *m431 = "4.3.1";
-const char *m443 = "4.4.3";
 const char *m454 = "4.5.4";
 const char *m471 = "4.7.1";
-const char *m513 = "5.1.3";
-const char *m517 = "5.1.7";
-const char *m534 = "5.3.4";
 const char *m540 = "5.4.0";
-const char *m543 = "5.4.3";
 const char *m550 = "5.5.0";
 const char *m551 = "5.5.1";
 const char *m552 = "5.5.2";
@@ -183,12 +169,12 @@ int ident_flag = 0;
 #endif				/* IDENT_TIMEOUT */
 
 #if defined(AF_INET6) && defined(INET6)
-static const struct in6_addr zin6addrany = 
+static const struct in6_addr zin6addrany =
 {
-    { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}};
-const struct in6_addr zv4mapprefix = 
+    {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}};
+const struct in6_addr zv4mapprefix =
 {
-    { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 255, 255, 0, 0}};
+    {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 255, 255, 0, 0}};
 #endif
 
 static void setrfc1413ident __((SmtpState * SS));
@@ -199,9 +185,6 @@ static void smtpserver __((SmtpState *, int insecure));
 
 
 const char *msg_toohighload = "421 Sorry, the system is too loaded for email reception at the moment\r\n";	/* XX: ??? */
-
-extern void type220headers __((SmtpState *SS, const int identflg, const char *xlatelang, const char *curtime));
-
 
 extern void openlogfp __((SmtpState * SS, int insecure));
 
@@ -225,7 +208,7 @@ int insecure;
 	    s = SS->rhostname;
 	len2 = strlen(s);
 #ifdef HAVE_ALLOCA
-	fname = (char*)alloca(len1 + 1 + len2 + 1);
+	fname = alloca(len1 + 1 + len2 + 1);
 #else
 	fname = malloc(len1 + 1 + len2 + 1);
 #endif
@@ -309,33 +292,21 @@ char **argv;
     /* optarg = NULL; */
     while (1) {
 	int c = getopt(argc, argv,
-#ifndef __STDC__
-#if defined(AF_INET6) && defined(INET6)
-#ifdef USE_TRANSLATION
-		       "?46aBC:d:ighl:np:L:M:P:R:s:S:VvX8"
-#else /* xlate */
-		       "?46aBC:d:ighl:np:L:M:P:R:s:S:Vv"
-#endif /* xlate */
-#else /* INET6 */
-#ifdef USE_TRANSLATION
-		       "?4aBC:d:ighl:np:L:M:P:R:s:S:VvX8"
-#else
-		       "?4aBC:d:ighl:np:L:M:P:R:s:S:Vv"
-#endif /* xlate */
-#endif /* INET6 */
-#else /* __STDC__ */
 		       "?"
+#ifdef USE_INET
 		       "4"
 #if defined(AF_INET6) && defined(INET6)
 		       "6"
 #endif
+#endif
 		       "aBC:d:ighl:n"
+#ifdef USE_INET
 		       "p:"
+#endif
 		       "L:M:P:R:s:S:Vv"
 #ifdef USE_TRANSLATION
 		       "X8"
 #endif /* USE_TRANSLATION */
-#endif
 		       );
 	if (c == EOF)
 	    break;
@@ -395,20 +366,19 @@ char **argv;
 	    inetd = 1;
 	    break;
 	case 's':		/* checking style */
-	    if (strcmp(optarg,"strict")==0)
-	      strict_protocol = 1;
-	    else
-	      style = strdup(optarg);
+	    style = strdup(optarg);
 	    break;
 	case 'L':		/* Max LoadAverage */
 	    maxloadavg = atoi(optarg);
 	    if (maxloadavg < 1)
 		maxloadavg = 10;	/* Humph.. */
 	    break;
+#ifdef	USE_INET
 	case 'p':
 	    port = htons(atoi(optarg));
 	    port_set = 1;
 	    break;
+#endif				/* USE_INET */
 	case 'R':		/* router binary used for verification */
 	    routerprog = strdup(optarg);
 	    break;
@@ -448,25 +418,24 @@ char **argv;
 #endif				/* CHECK42INETD */
     if (errflg || optind != argc) {
 	fprintf(stderr,
-#ifndef __STDC__
-		"Usage: %s [-46aBivgnV]\
- [-C cfgfile] [-s xx] [-L maxLoadAvg]\
- [-M SMTPmaxsize] [-R rtrprog] [-p port#]\
- [-P postoffice] [-l logfile] [-S 'local'|'remote']\n"
-#else /* __STDC__ */
-		"Usage: %s [-4"
+		"Usage: %s [-"
+#ifdef	USE_INET
+		"4"
 #if defined(AF_INET6) && defined(INET6)
 		"6"
+#endif
 #endif
 		"aBivgnV"
 #ifdef USE_TRANSLATION
 		"X8"
 #endif
 		"] [-C cfgfile] [-s xx] [-L maxLoadAvg]"
-		" [-M SMTPmaxsize] [-R rtrprog] [-p port#]"
-		" [-P postoffice] [-l logfile] [-S 'local'|'remote']\n"
-#endif /* __STDC__ */
-		, progname);
+		" [-M SMTPmaxsize] [-R rtrprog]"
+#ifdef USE_INET
+		" [-p port#]"
+#endif
+		" [-P postoffice] [-l logfile] [-S 'local'|'remote']\n",
+		progname);
 	exit(1);
     }
     pid = getpid();
@@ -476,12 +445,11 @@ char **argv;
     mailshare = getzenv("MAILSHARE");
     if (mailshare == NULL)
 	mailshare = MAILSHARE;
-    if (cfgpath == NULL) {
+    if (cfgpath == NULL)
       if (strchr(progname, '/') != NULL)
 	sprintf(path, "%s/%s.conf", mailshare, strrchr(progname, '/') + 1);
       else
 	sprintf(path, "%s/%s.conf", mailshare, progname);
-    }
 
     if (cfgpath == NULL)
       cfhead = readcffile(path);
@@ -491,26 +459,17 @@ char **argv;
     if (!allow_source_route)
       allow_source_route = (getzenv("ALLOWSOURCEROUTE") != NULL);
 
-    netconnected_flg = 0;
-
     if (!daemon_flg) {
+	strcpy(SS.rhostname, "stdin");
+	SS.rport = -1;
+	SS.ihostaddr[0] = '\0';
+	sprintf(SS.ident_username, "uid#%d@localhost", getuid());
 
-      raddrlen = sizeof SS.raddr;
-      memset(&SS.raddr, 0, raddrlen);
-      if (getpeername(SS.inputfd, (struct sockaddr *) &SS.raddr, &raddrlen))
-	netconnected_flg = 0;
-      else
-	netconnected_flg = 1;
-
-      strcpy(SS.rhostname, "stdin");
-      SS.rport = -1;
-      SS.ihostaddr[0] = '\0';
-      sprintf(SS.ident_username, "uid#%d@localhost", (int)getuid());
-
-      s_setup(&SS, FILENO(stdin), stdout);
-      smtpserver(&SS, 0);
+	s_setup(&SS, FILENO(stdin), stdout);
+	smtpserver(&SS, 0);
 
     } else
+#ifdef	USE_INET
     if (inetd) {
 #if 0
 	if (maxloadavg != 999 &&
@@ -522,18 +481,17 @@ char **argv;
 #endif
 	raddrlen = sizeof SS.raddr;
 	memset(&SS.raddr, 0, raddrlen);
-
-	if (getpeername(SS.inputfd, (struct sockaddr *) &SS.raddr, &raddrlen))
-	  netconnected_flg = 0;
-	else
-	  netconnected_flg = 1;
-
+	if (getpeername(SS.inputfd, (struct sockaddr *) &SS.raddr, &raddrlen)) {
+	    fprintf(stderr, "%s: getpeername(0): %s\n",
+		    progname, strerror(errno));
+	    exit(1);
+	}
 #if defined(AF_INET6) && defined(INET6)
 	if (SS.raddr.v6.sin6_family == AF_INET6)
-	  SS.rport = SS.raddr.v6.sin6_port;
+	    SS.rport = SS.raddr.v6.sin6_port;
 	else
 #endif
-	  SS.rport = SS.raddr.v4.sin_port;
+	    SS.rport = SS.raddr.v4.sin_port;
 
 	setrhostname(&SS);
 
@@ -557,29 +515,15 @@ char **argv;
 	sprintf(SS.ident_username + strlen(SS.ident_username),
 		" [port %d]", SS.rport);
 
-	if (smtp_syslog && ident_flag) {
-#ifdef HAVE_WHOSON_H
-	    zsyslog((LOG_INFO, "connection from %s@%s (whoson: $s)\n",
-		     SS.ident_username, SS.rhostname, SS.whoson_data));
-#else
+	if (smtp_syslog && ident_flag)
 	    zsyslog((LOG_INFO, "connection from %s@%s\n",
 		     SS.ident_username, SS.rhostname));
-#endif
-	}
 
 	pid = getpid();
-	settrusteduser();	/* dig out the trusted user ID */
 	openlogfp(&SS, daemon_flg);
-	if (logfp != NULL) {
-#ifdef HAVE_WHOSON_H
-	    fprintf(logfp, "%d#\tconnection from %s:%d ident: %s whoson: %s\n",
-		    pid, SS.rhostname, SS.rport, SS.ident_username, SS.whoson_data);
-#else
+	if (logfp != NULL)
 	    fprintf(logfp, "%d#\tconnection from %s:%d ident: %s\n",
 		    pid, SS.rhostname, SS.rport, SS.ident_username);
-#endif
-	}
-
 #if 0
 	SIGNAL_HANDLE(SIGCHLD, SIG_DFL);
 #else
@@ -758,6 +702,7 @@ char **argv;
 	pid = getpid();
 	openlogfp(&SS, daemon_flg);
 	if (logfp != NULL) {
+	    time_t now;
 	    char *cp;
 	    time(&now);
 	    cp = rfc822date(&now);
@@ -847,8 +792,6 @@ char **argv;
 	    } else {			/* Child */
 		SIGNAL_RELEASE(SIGCHLD);
 
-		netconnected_flg = 1;
-
 		close(s);	/* Listening socket.. */
 		pid = getpid();
 
@@ -862,7 +805,6 @@ char **argv;
 		if (logfp)	/* Open the logfp latter.. */
 		    fclose(logfp);
 		logfp = NULL;
-
 
 #if 0
 		if (maxloadavg != 999 &&
@@ -902,30 +844,18 @@ char **argv;
 		else
 		    strcpy(SS.ident_username, "IDENT-NOT-QUERIED");
 
-		if (smtp_syslog && ident_flag) {
-#ifdef HAVE_WHOSON_H
-		  zsyslog((LOG_INFO, "connection from %s@%s (whoson: %s)\n",
-			   SS.ident_username, SS.rhostname, SS.whoson_data));
-#else /* WHOSON */
+		if (smtp_syslog && ident_flag)
 		  zsyslog((LOG_INFO, "connection from %s@%s\n",
 			   SS.ident_username, SS.rhostname));
-#endif
-		}
+
 		pid = getpid();
 
 		openlogfp(&SS, daemon_flg);
-		if (logfp != NULL) {
-#ifdef HAVE_WHOSON_H
+		if (logfp != NULL)
 		    fprintf(logfp,
-			    "%d#\tconnection from %s ipcnt %d ident: %s whoson: %s\n",
-			    pid, SS.rhostname, sameipcount, SS.ident_username,
-			    SS.whoson_data);
-#else
-		    fprintf(logfp,
-			    "%d#\tconnection from %s ipcnt %d ident: %s\n",
-			    pid, SS.rhostname, sameipcount, SS.ident_username);
-#endif
-		}
+		    "%d#\tconnection from %s ipcnt %d ident: %s\n",
+		    pid, SS.rhostname, sameipcount, SS.ident_username);
+
 /* if (logfp) fprintf(logfp,"%d#\tInput fd=%d\n",getpid(),msgfd); */
 
 		if (sameipcount > MaxSameIpSource && sameipcount > 1) {
@@ -941,7 +871,7 @@ char **argv;
 		    len = strlen(msg);
 		    write(msgfd, msg, len);
 		    close(0); close(1);
-#if 1
+#if 0
 		    sleep(2);	/* Not so fast!  We need to do this to
 				   avoid (as much as possible) the child
 				   to exit before the parent has called
@@ -963,6 +893,14 @@ char **argv;
 	    }
 	}
     }
+#else				/* !USE_INET */
+
+	fprintf(stderr,
+		"%s: no daemon mode since no IPC available\n",
+		argv[0]);
+    exit(1);
+
+#endif				/* !USE_INET */
     if (routerpid > 0)
 	killr(&SS, routerpid);
     sleep(2);
@@ -1003,6 +941,7 @@ char *arg;
 #endif				/* CHECK42INETD */
 
 
+#ifdef	USE_INET
 /*
  * set the (default) remote host name, possibly based on the remote IP
  * host address if we are feeling untrusting.
@@ -1057,6 +996,7 @@ SmtpState *SS;
 	strcpy(SS->rhostname, SS->ihostaddr);
     }
 }
+#endif				/* USE_INET */
 
 static RETSIGTYPE
  timedout(sig)
@@ -1105,7 +1045,7 @@ const char *msg;
     zsyslog((LOG_ERR,
 	     "aborted (%ld bytes) from %s/%d: %s", tell, SS->rhostname, SS->rport, msg));
     if (logfp != NULL) {
-	fprintf(logfp, "%d-\taborted (%ld bytes): %s\n", pid, tell, msg);
+	fprintf(logfp, "%d#\taborted (%ld bytes): %s\n", pid, tell, msg);
 	fflush(logfp);
     }
 }
@@ -1130,12 +1070,11 @@ SmtpState *SS;
     redo:
 	rc = read(SS->inputfd, SS->s_buffer, sizeof(SS->s_buffer));
 	if (rc < 0) {
-	  goto redo; /* XX: ??? some input-problem circumvention problem ?? */
-	  if (errno == EINTR || errno == EAGAIN)
-	    goto redo;
-	  /* Other results are serious errors -- maybe */
-	  SS->s_status = EOF;
-	  return EOF;
+	    if (errno == EINTR || errno == EAGAIN)
+		goto redo;
+	    /* Other results are serious errors -- maybe */
+	    SS->s_status = EOF;
+	    return EOF;
 	}
 	if (rc == 0) {
 	    SS->s_status = EOF;
@@ -1226,13 +1165,8 @@ int insecure;
 	reporterr(SS, tell, "SMTP protocol timed out");
 
 	/* If there is something going on, kill the file.. */
-	if (SS->mfp != NULL) {
-	  if (STYLE(SS->cfinfo,'D')) {
-	    /* Says: DON'T DISCARD -- aka DEBUG ERRORS! */
-	    mail_close_alternate(SS->mfp,"public",".SMTP-TIMEOUT");
-	  } else
+	if (SS->mfp != NULL)
 	    mail_abort(SS->mfp);
-	}
 	SS->mfp = NULL;
 
 	if (routerpid > 0)
@@ -1275,29 +1209,7 @@ int insecure;
 	exit(0);
 #endif				/* USE_TRANSLATION */
     }
-#ifdef HAVE_WHOSON_H
-    {
-	char buf[64];
-	buf[0]='\0';
-	if (SS->raddr.v4.sin_family == AF_INET) {
-	  inet_ntop(AF_INET, (void *) &SS->raddr.v4.sin_addr,	/* IPv4 */
-		    buf, sizeof(buf) - 1);
-#if defined(AF_INET6) && defined(INET6)
-	} else if (SS->raddr.v6.sin6_family == AF_INET6) {
-	  inet_ntop(AF_INET6, (void *) &SS->raddr.v6.sin6_addr,  /* IPv6 */
-		    buf, sizeof(buf) - 1);
-#endif
-	}
-	if ((SS->whoson_result = wso_query(buf, SS->whoson_data,
-					   sizeof(SS->whoson_data)))) {
-	    strcpy(SS->whoson_data,"UNAVAILABLE");
-	}
-    }
-    policystatus     = policyinit(&policydb, &SS->policystate,
-				  SS->whoson_result);
-#else
-    policystatus     = policyinit(&policydb, &SS->policystate, 0);
-#endif
+    policystatus     = policyinit(&policydb, &SS->policystate);
     SS->policyresult = policytestaddr(policydb, &SS->policystate,
 				      POLICY_SOURCEADDR,
 				      (void *) &SS->raddr);
@@ -1335,24 +1247,12 @@ int insecure;
 	type(SS, 553, NULL, "Ask HELP for our contact information.");
     } else
 #ifdef USE_TRANSLATION
-	if (hdr220lines[0] == NULL) {
-	  hdr220lines[0] = "%H ZMailer Server %V ESMTP%I (%X) ready at %T";
-	}
-	type220headers(SS, ident_flag, X_settrrc ? "nulltrans" : lang, cp);
-#if 0
 	type(SS, 220, NULL, "%s ZMailer Server %s ESMTP%s (%s) ready at %s",
 	     SS->myhostname, VersionNumb, ident_flag ? "+IDENT" : "",
 	     X_settrrc ? "nulltrans" : lang, cp);
-#endif
 #else				/* USE_TRANSLATION */
-	if (hdr220lines[0] == NULL) {
-	  hdr220lines[0] = "%H ZMailer Server %V ESMTP%I ready at %T";
-	}
-	type220headers(SS, ident_flag, "", cp);
-#if 0
 	type(SS, 220, NULL, "%s ZMailer Server %s ESMTP%s ready at %s",
 	     SS->myhostname, VersionNumb, ident_flag ? "+IDENT" : "", cp);
-#endif
 #endif				/* USE_TRANSLATION */
     typeflush(SS);
 
@@ -1372,10 +1272,9 @@ int insecure;
 		    pid, SS->ihostaddr, SS->rport);
 	else
 	    fprintf(logfp, "%d#\tlocal from uid#%d\n",
-		    pid, (int)getuid());
-	if (SS->policyresult != 0 || s != NULL)
-	  fprintf(logfp, "%d#\t-- policyresult=%d initial policy msg: %s\n",
-		  pid, SS->policyresult, (s ? s : "<NONE!>"));
+		    pid, getuid());
+	fprintf(logfp, "%d#\t-- policyresult=%d initial policy msg: %s\n",
+		pid, SS->policyresult, (s ? s : "<NONE!>"));
 	fflush(logfp);
     }
     while (1) {
@@ -1386,7 +1285,6 @@ int insecure;
 	int c, co = -1;
 	int i;
 	char *eobuf;
-
 	rc = -1;
 
 	if (!s_hasinput(SS))
@@ -1416,7 +1314,6 @@ int insecure;
 		(c < 32 || c == 127) && rc < 0)
 		rc = i;
 	    buf[i++] = c;
-	    co = c;
 	}
 	buf[i] = '\0';
 	eobuf = &buf[i];	/* Buf end ptr.. */
@@ -1428,34 +1325,22 @@ int insecure;
 	    SS->mfp = NULL;
 	    break;
 	}
+	if (c != '\n') {
+	    type(SS, 500, m552, "Line too long/not terminated with CRLF..");
+	    continue;
+	}
 	/* Zap the possible trailing  \r */
 	if ((eobuf > buf) && (eobuf[-1] == '\r'))
 	    *--eobuf = '\0';
 
 	/* Chop the trailing spaces */
-	if (!strict_protocol) {
-	  while ((eobuf > buf) && (eobuf[-1] == ' ' ||
-				   eobuf[-1] == '\t'))
+	while ((eobuf > buf) && (eobuf[-1] == ' ' ||
+				 eobuf[-1] == '\t'))
 	    *--eobuf = '\0';
-	} else if (strict_protocol &&
-		   eobuf > buf && (eobuf[-1] == ' ' ||
-				   eobuf[-1] == '\t')) {
-	  /* XX: Warn about trailing whitespaces on inputs!
-	     ... except that this is likely *wrong* place, as
-	     there are many varying input syntaxes... */
-	}
-				   
 
 	if (logfp != NULL) {
 	    fprintf(logfp, "%dr\t%s\n", pid, buf);
 	    fflush(logfp);
-	}
-	if (rc >= 0 && !strict_protocol) {
-	  if (cistrncmp(buf,"HELO",4) == 0 ||
-	      cistrncmp(buf,"EHLO",4) == 0)
-	    rc = -1; /* Sigh... Bloody windows users naming their
-			machines with junky names, and M$ being
-			its normal incompetent protocol cleaner... */
 	}
 	if (rc >= 0) {
 	    rfc821_error_ptr = buf + rc;
@@ -1465,21 +1350,6 @@ int insecure;
 			((buf[rc] & 0x80) ? "8-bit char on SMTP input" :
 			 "Control chars on SMTP input")));
 	    typeflush(SS);
-	    continue;
-	}
-	if (!strict_protocol && c != '\n' && i > 3) {
-	  /* Some bloody systems send:  "QUIT\r",
-	     and then close the socket... */
-	  if (cistrcmp(buf,"QUIT") == 0) {
-	    co = '\r';
-	    c = '\n'; /* Be happy... */
-	  }
-	}
-	if ((strict_protocol && (c != '\n' || co != '\r')) || (c != '\n')) {
-	    if (i < (sizeof(buf)-1))
-	      type(SS, 500, m552, "Line not terminated with CRLF..");
-	    else
-	      type(SS, 500, m552, "Line too long (%d chars)", i);
 	    continue;
 	}
 	if (verbose && !daemon_flg)
@@ -1501,7 +1371,7 @@ int insecure;
 	    if (CISTREQ(SS->carp->verb, buf))
 		break;
 	}
-	*cp = c;
+	*cp++ = c;
 	if (SS->carp->verb == NULL) {
 
 	unknown_command:
@@ -1524,7 +1394,7 @@ int insecure;
 	if (policystatus != 0 &&
 	    SS->carp->cmd != Quit && SS->carp->cmd != Help) {
 	  type(SS, -400, "4.7.0", "Policy database problem, code=%d", policystatus);
-	  type(SS,  400, "4.7.0", "With 'HELP' command you can get our contact information.");
+	  type(SS,  400, "4.7.0", "With 'HELP' command you can get out contact information.");
 	  typeflush(SS);
 	  zsyslog((LOG_EMERG, "smtpserver policy database problem, code: %d", policystatus));
 	  sleep(20);
@@ -1571,10 +1441,6 @@ int insecure;
 		return;
 	    break;
 	case Reset:
-	    if (*cp != 0 && strict_protocol) {
-	      type(SS, 501, m554, "Extra junk after 'RSET' verb");
-	      break;
-	    }
 	    if (SS->mfp != NULL) {
 		clearerr(SS->mfp);
 		mail_abort(SS->mfp);
@@ -1603,17 +1469,10 @@ int insecure;
 	    typeflush(SS);
 	    break;
 	case Turn:
-	    if (*cp != 0 && STYLE(SS->cfinfo,'R')) {
-	      type(SS, -502, m554, "Extra junk after 'TURN' verb");
-	    }
 	    type(SS, 502, m551, (char *) NULL);
 	    typeflush(SS);
 	    break;
 	case NoOp:
-	    if (*cp != 0 && STYLE(SS->cfinfo,'R')) {
-	      type(SS, 501, m554, "Extra junk after 'NOOP' verb");
-	      break;
-	    }
 	    type(SS, 250, m200, (char *) NULL);
 	    typeflush(SS);
 	    break;
@@ -1640,9 +1499,6 @@ int insecure;
 	    SS->with_protocol = WITH_BSMTP;
 	    break;
 	case Quit:
-	    if (*cp != 0 && STYLE(SS->cfinfo,'R')) {
-	      type(SS, -221, m554, "Extra junk after 'QUIT' verb");
-	    }
 	    if (SS->mfp != NULL)
 		mail_abort(SS->mfp);
 	    SS->mfp = NULL;
@@ -1659,7 +1515,7 @@ int insecure;
 	tell = lseek(0, 0, SEEK_CUR);
 	reporterr(SS, tell, "session terminated");
     } else if (logfp != NULL) {
-	fprintf(logfp, "%d-\tSession closed w/o QUIT\n", pid);
+	fprintf(logfp, "%d#\tSession closed w/o QUIT\n", pid);
 	fflush(logfp);
     }
 }
@@ -1774,14 +1630,13 @@ const char *status, *fmt, *s1, *s2, *s3, *s4, *s5, *s6;
 
     fprintf(SS->outfp, "%03d%c", code, c);
     if (status && status[0] != 0)
-      fprintf(SS->outfp, "%s ", status);
+	fprintf(SS->outfp, "%s ", status);
 
     if (logfp != NULL) {
-      fprintf(logfp, "%dw\t%03d%c", pid, code, c);
-      if (status && status[0] != 0)
-	fprintf(logfp, "%s ", status);
+	fprintf(logfp, "%dw\t%03d%c", pid, code, c);
+	if (status && status[0] != 0)
+	    fprintf(logfp, "%s ", status);
     }
-
     switch (code) {
     case 211:			/* System status */
 	text = "%s";
@@ -1895,83 +1750,6 @@ const char *status, *fmt, *s1, *s2, *s3, *s4, *s5, *s6;
 
 
 void
-type220headers(SS, identflg, xlatelang, curtime)
-     SmtpState *SS;
-     const int identflg;
-     const char *xlatelang;
-     const char *curtime;
-{
-    char *s, **hh = hdr220lines;
-
-    for (; *hh ; ++hh) {
-      char c = (hh[1] == NULL) ? ' ' : '-';
-      
-      fprintf(SS->outfp, "%03d%c", 220, c);
-      if (logfp != NULL)
-	fprintf(logfp, "%dw\t%03d%c", pid, 220, c);
-
-      /* The format meta-tags:
-       *
-       *  %% -- '%' character
-       *  %H -- SS->myhostname
-       *  %I -- '+IDENT' if 'identflg' is set
-       *  %V -- VersionNumb
-       *  %T -- curtime string
-       *  %X -- xlatelang parameter
-       */
-
-      s = *hh;
-      while (*s) {
-	if (*s == '%') {
-	  ++s;
-	  switch (*s) {
-	  case '%':
-	    putc('%',SS->outfp);
-	    if (logfp) putc('%',logfp);
-	    break;
-	  case 'H':
-	    fputs(SS->myhostname,SS->outfp);
-	    if (logfp) fputs(SS->myhostname,logfp);
-	    break;
-	  case 'I':
-	    if (identflg) {
-	      fputs("+IDENT",SS->outfp);
-	      if (logfp) fputs("+IDENT",logfp);
-	    }
-	    break;
-	  case 'V':
-	    fputs(VersionNumb,SS->outfp);
-	    if (logfp) fputs(VersionNumb,logfp);
-	    break;
-	  case 'T':
-	    fputs(curtime,SS->outfp);
-	    if (logfp) fputs(curtime,logfp);
-	    break;
-	  case 'X':
-	    if (!xlatelang) xlatelang = "";
-	    fputs(xlatelang,SS->outfp);
-	    if (logfp) fputs(xlatelang,logfp);
-	    break;
-	  default:
-	    /* Duh ?? */
-	    break;
-	  }
-	} else {
-	  putc(*s, SS->outfp);
-	  if (logfp) putc(*s, logfp);
-	}
-	if (*s) ++s;
-      }
-      putc('\r',SS->outfp);
-      putc('\n',SS->outfp);
-      if (logfp) putc('\n',logfp);
-    }
-    fflush(SS->outfp);
-    if (logfp) fflush(logfp);
-}
-
-
-void
 #ifdef HAVE_STDARG_H
 #ifdef __STDC__
  type821err(SmtpState * SS, const int code, const char *status,
@@ -1989,10 +1767,10 @@ va_dcl
 #endif
 {
     va_list ap;
+    const char *s = inbuf + 3 + strlen(status) + 1;
     int maxcnt = 200;
     int abscode;
     const char *a1, *a2, *a3, *a4;
-    const char *s;
 
 #ifdef HAVE_STDARG_H
     va_start(ap, msg);
@@ -2007,9 +1785,6 @@ va_dcl
     inbuf = va_arg(ap, const char *);
     msg = va_arg(ap, const char *);
 #endif
-
-    s = inbuf + 3 + strlen(status) + 1;
-
     /* These are not always safe... but they should be ok
        if we are carrying  (char*)s or (int)s.. */
     a1 = va_arg(ap, const char *);

@@ -34,7 +34,6 @@ extern int slow_shutdown;
 extern time_t now;
 extern char *procselect, *procselhost;
 extern time_t sched_starttime; /* From main() */
-extern int mailqmode;	/* 1 or 2 */
 
 static long groupid  = 0;
 static long threadid = 0;
@@ -261,6 +260,7 @@ static void pick_next_thread(thg, thr0, proc)
      struct procinfo *proc;
 {
 	struct thread *thr;
+	int once = 1;
 
 	for (thr = thg->thread; thr != NULL; thr = thr->nextthg) {
 
@@ -298,6 +298,7 @@ int ok;
 	   group.  Decrement thread-group count		    */
 
 	struct threadgroup *thg = thr->thgrp;
+	int last = 0;
 
 	if (verbose)
 	  printf("delete_thread(0x%p:%s/%s) (thg=0x%p)\n",
@@ -335,11 +336,11 @@ int ok;
 	    thr->proc->vertex = NULL;
 	    if (verbose)
 	      fprintf(stderr,"delete_thread(1) thr->proc=0x%p pid=%d\n",
-		      thr->proc, (int)thr->proc->pid);
+		      thr->proc, thr->proc->pid);
 	  } else {
 	    if (verbose)
 	      fprintf(stderr,"delete_thread(1b) thr->proc=0x%p pid=%d\n",
-		      thr->proc, thr->proc ? (int)thr->proc->pid : 0);
+		      thr->proc, thr->proc ? thr->proc->pid : 0);
 	  }
 	} else {
 	  /* Some threads left						*/
@@ -360,7 +361,7 @@ int ok;
 	    ++idleprocs;
 	    if (verbose)
 	      fprintf(stderr, "delete_thread(2) thr->proc=0x%p pid=%d ",
-		      proc, (int)proc->pid);
+		      proc, proc->pid);
 	    /* Find a free thread - or stay in idle.. */
 	    pick_next_thread(thg, thr, proc);
 	    if (verbose)
@@ -372,11 +373,11 @@ int ok;
 	    thr->proc->vertex = NULL;
 	    if (verbose)
 	      fprintf(stderr, "delete_thread(2b) thr->proc=0x%p pid=%d\n",
-		      thr->proc, (int)thr->proc->pid);
+		      thr->proc, thr->proc->pid);
 	  } else {
 	    if (verbose)
 	      fprintf(stderr, "delete_thread(3) thr->proc=0x%p pid=%d\n",
-		      thr->proc, thr->proc ? (int)thr->proc->pid : 0);
+		      thr->proc, thr->proc ? thr->proc->pid : 0);
 	  }
 	}
 
@@ -435,9 +436,8 @@ void (*ce_fillin) __((struct threadgroup*, struct config_entry *));
 
 	mytime(&now);
 
-	if (verbose)
-	  printf("thread_linkin([%s/%s],%s/%d/%s,%d)\n",wc->name,wh->name,
-		 cep->channel,cep->flags & CFG_WITHHOST,cep->host,cfgid);
+if (verbose) printf("thread_linkin([%s/%s],%s/%d/%s,%d)\n",wc->name,wh->name,
+		    cep->channel,cep->flags & CFG_WITHHOST,cep->host,cfgid);
 
 	/* char const *vp_chan = wc->name; */
 	/* char const *vp_host = wh->name; */
@@ -491,10 +491,9 @@ void (*ce_fillin) __((struct threadgroup*, struct config_entry *));
 
 	    /* Link the vertex into this thread! */
 
-	    if (verbose)
-	      printf("thread_linkin() to thg=0x%p[%s/%d/%s]; added into existing thread [%s/%s] thr->jobs=%d\n",
-		     thg,cep->channel,thg->withhost,cep->host,
-		     wc->name,wh->name,thr->jobs+1);
+if (verbose) printf("thread_linkin() to thg=0x%p[%s/%d/%s]; added into existing thread [%s/%s] thr->jobs=%d\n",
+		    thg,cep->channel,thg->withhost,cep->host,
+		    wc->name,wh->name,thr->jobs+1);
 
 	    _thread_linktail(thr,vp);
 	    vp->thgrp = thg;
@@ -512,10 +511,9 @@ void (*ce_fillin) __((struct threadgroup*, struct config_entry *));
 	  thr = create_thread(thg,vp,cep);
 	  vp->thgrp = thg;
 
-	  if (verbose)
-	    printf("thread_linkin() to thg=0x%p[%s/%d/%s]; created a new thread 0x%p [%s/%s]\n",
-		   thg,cep->channel,thg->withhost,cep->host,
-		   thr,wc->name,wh->name);
+if (verbose) printf("thread_linkin() to thg=0x%p[%s/%d/%s]; created a new thread 0x%p [%s/%s]\n",
+		    thg,cep->channel,thg->withhost,cep->host,
+		    thr,wc->name,wh->name);
 
 
 	  /* Try to start it too */
@@ -530,10 +528,9 @@ void (*ce_fillin) __((struct threadgroup*, struct config_entry *));
 	thr = create_thread(thg,vp,cep);
 	vp->thgrp = thg;
 
-	if (verbose)
-	  printf("thread_linkin() to thg=0x%p[%s/%d/%s]; created a new thread group, and thread [%s/%s]\n",
-		 thg,cep->channel,thg->withhost,cep->host,
-		 wc->name,wh->name);
+if (verbose) printf("thread_linkin() to thg=0x%p[%s/%d/%s]; created a new thread group, and thread [%s/%s]\n",
+		    thg,cep->channel,thg->withhost,cep->host,
+		    wc->name,wh->name);
 	/* Try to start it too */
 	if(!(thg->cep->flags & CFG_QUEUEONLY)) {
 		thread_start(thr);
@@ -1148,13 +1145,12 @@ time_t retrytime;
 	  goto timechain_handling;
 	}
 
-	if (thr->retryindex >= vtx->thgrp->ce.nretries) {
+	if (thr->retryindex >= vtx->thgrp->ce.nretries)
 	  if (vtx->thgrp->ce.nretries > 1)
 	    thr->retryindex = ranny(vtx->thgrp->ce.nretries-1);
 	  else
 	    thr->retryindex = 0;
-	}
-
+	
 	/*
 	 * clamp retry time to a predictable interval so we
 	 * eventually bunch up deliveries.
@@ -1299,12 +1295,11 @@ reschedule(vp, factor, index)
 	}
 #endif
 	if (factor == -1 && vp->attempts) {
-	  if (thr->retryindex >= ce->nretries) {
+	  if (thr->retryindex >= ce->nretries)
 	    if (ce->nretries > 1)
 	      thr->retryindex = ranny(ce->nretries-1);
 	    else
 	      thr->retryindex = 0;
-	  }
 
 	  /*
 	   * clamp retry time to a predictable interval so we
@@ -1442,7 +1437,7 @@ if (verbose) printf("idle_cleanup()\n");
 		   Rest of the cleanup happens via mux() service. */
 		if (verbose)
 		  printf("idle_cleanup() killing TA on tofd=%d pid=%d\n",
-			 p->tofd, (int)p->pid);
+			 p->tofd,p->pid);
 		write(p->tofd,"\n",1);
 		pipes_shutdown_child(p->tofd);
 		p->tofd       = -1;
@@ -1568,8 +1563,8 @@ int fullmode;
 	      if (thr->proc != NULL &&
 		  thr->proc->thread == thr) {
 		++procs;
-		fprintf(fp," P=%-5d", (int)thr->proc->pid);
-		fprintf(fp," HA=%ds", (int)(now - thr->proc->hungertime));
+		fprintf(fp," P=%-5d",thr->proc->pid);
+		fprintf(fp," HA=%ds",(int)(now - thr->proc->hungertime));
 		if (thr->proc->feedtime == 0)
 		  fprintf(fp," FA=never");
 		else

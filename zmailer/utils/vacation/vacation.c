@@ -1,12 +1,4 @@
-/*
- *  vacation -- originally BSD vacation by Eric Allman,
- *
- *  Adapted to ZMailer by Rayan Zachariassen, and further
- *  modified by Matti Aarnio over years 1988(?) thru 1998.
- */
-
 #include "hostenv.h"
-
 #include <stdio.h>
 #include <ctype.h>
 #ifdef HAVE_STDLIB_H
@@ -33,16 +25,6 @@
 #ifdef  HAVE_GDBM_H
 #include <gdbm.h>
 #include <fcntl.h>
-#else
-#ifdef  HAVE_DB_H
-#ifdef HAVE_DB_185_H
-# include <db_185.h>
-#else
-# include <db.h>
-#endif
-#else
-:error:error:error "To compile, VACATION needs ndbm.h, gdbm.h, or db.h; none found!"
-#endif
 #endif
 #endif
 /* #include "useful.h"  */
@@ -53,6 +35,7 @@
 #include "libz.h"
 #include "libc.h"
 
+extern void   sendmessage __((const char *, const char *));
 extern char * newstr __((const char *));
 extern void   setinterval __((time_t));
 extern void   setreply __((void));
@@ -114,19 +97,13 @@ ALIAS *names = NULL;
 
 #ifdef	HAVE_NDBM_H
 DBM *db;
-#define DBT datum
 #else
 #ifdef HAVE_GDBM_H
 GDBM_FILE db;
-#define DBT datum
-#else /* HAVE_DB_H */
-DB *db;
-/* Natural datum type is: DBT */
-#define dptr  data
-#define dsize size
 #endif /* GDBM */
 #endif	/* NDBM */
 
+#define DBT datum
 
 char from[MAXLINE];
 char *subject_str = NULL;	/* Glob subject from input */
@@ -145,10 +122,6 @@ extern void usrerr __((char *));
 extern void syserr __((char *));
 extern void readheaders __((void));
 extern char *strerror __((int));
-static int recent __((void));
-static int junkmail __((void));
-static int nsearch __((char *name, char *str));
-static void sendmessage __((const char *msgf, const char *myname));
 
 const char *progname;
 
@@ -162,7 +135,7 @@ main(argc, argv)
 	ALIAS *cur;
 	time_t interval;
 	char *msgfile = NULL;
-	int ch, iflag, ret;
+	int ch, iflag;
 
 	progname = argv[0];
 
@@ -170,39 +143,38 @@ main(argc, argv)
 	opterr = iflag = 0;
 	interval = -1;
 	while ((ch = getopt(argc,argv,"a:Iir:t:m:d?")) != EOF) {
-	  switch ((char)ch) {
-	  case 'a':	/* alias */
-	    cur = (ALIAS*) malloc((u_int)sizeof(ALIAS));
-	    if (!cur)
-	      break;
-	    cur->name = optarg;
-	    cur->next = names;
-	    names = cur;
-	    break;
-	  case 'I':	/* backwards compatible */
-	  case 'i':	/* initialize the database*/
-	    iflag = 1;
-	    break;
-	  case 'm':	/* set file to get message from */
-	    msgfile = optarg;
-	    break;
-	  case 'd':	/* No dbm log of sender */
-	    dblog = 0;
-	    break;
-	  case 't':
-	  case 'r':
-	    if (isdigit(*optarg)) {
-	      interval = atol(optarg) * (24*60*60);
-	      if (interval < 0)
-		usage();
-	    }
-	    else
-	      interval = INT_MAX;
-	    break;
-	  case '?':
-	  default:
-	    usage();
-	  }
+		switch ((char)ch) {
+		  case 'a':	/* alias */
+		        if (!(cur = (ALIAS*) malloc((u_int)sizeof(ALIAS))))
+			  break;
+			cur->name = optarg;
+			cur->next = names;
+			names = cur;
+			break;
+		  case 'I':	/* backwards compatible */
+		  case 'i':	/* initialize the database*/
+			iflag = 1;
+			break;
+		  case 'm':	/* set file to get message from */
+			msgfile = optarg;
+			break;
+		  case 'd':	/* No dbm log of sender */
+			dblog = 0;
+			break;
+		  case 't':
+		  case 'r':
+			if (isdigit(*optarg)) {
+				interval = atol(optarg) * (24*60*60);
+				if (interval < 0)
+					usage();
+			}
+			else
+				interval = INT_MAX;
+			break;
+		  case '?':
+		  default:
+			usage();
+		}
 	}
 
 	argc -= optind;
@@ -211,104 +183,104 @@ main(argc, argv)
 	/* verify recipient argument */
 #ifdef ZMAILER
 	if (argc == 0) {
-	  p = getenv("USER");
-	  if (p == NULL) {
-	    usrerr("Zmailer error: USER environment variable not set");
-	    exit(EX_USAGE+101);
-	  }
+		p = getenv("USER");
+		if (p == NULL) {
+			usrerr
+			  ("Zmailer error: USER environment variable not set");
+			exit(EX_USAGE+101);
+		}
 	}
 #endif /* ZMAILER */
 
 	if (argc != 1) {
-	  if (!iflag)
-	    usage();
-	  pw = getpwuid(getuid());
-	  if (!pw) {
-	    fprintf(stderr, "vacation: no such user uid %u.\n", getuid());
-	    exit(EX_NOUSER);
-	  }
+		if (!iflag)
+			usage();
+		if (!(pw = getpwuid(getuid()))) {
+			fprintf(stderr,
+				"vacation: no such user uid %u.\n", getuid());
+			exit(EX_NOUSER);
+		}
 	} else if (!(pw = getpwnam(*argv))) {
-	  fprintf(stderr, "vacation: no such user %s.\n", *argv);
-	  exit(EX_NOUSER);
+		fprintf(stderr, "vacation: no such user %s.\n", *argv);
+		exit(EX_NOUSER);
 	}
 	if (chdir(pw->pw_dir)) {
-	  fprintf(stderr, "vacation: no such directory %s.\n", pw->pw_dir);
-	  exit(EX_NOUSER);
+		fprintf(stderr,
+			"vacation: no such directory %s.\n", pw->pw_dir);
+		exit(EX_NOUSER);
 	}
 
 	/* verify recipient argument */
 #ifdef ZMAILER
 	if (argc == 0) {
-	  p = getenv("USER");
-	  if (p == NULL) {
-	    usrerr("Zmailer error: USER environment variable not set");
-	    exit(EX_USAGE+102);
-	  }
+		p = getenv("USER");
+		if (p == NULL) {
+			usrerr
+			  ("Zmailer error: USER environment variable not set");
+			exit(EX_USAGE+102);
+		}
 	}
 #endif /* ZMAILER */
 
 #ifdef	HAVE_NDBM_H
 	if (dblog)
-	  db = dbm_open(VDB, O_RDWR | (iflag ? O_TRUNC|O_CREAT : 0),
-			S_IRUSR|S_IWUSR);
+		db = dbm_open(VDB, O_RDWR | (iflag ? O_TRUNC|O_CREAT : 0),
+			      S_IRUSR|S_IWUSR);
 #else	/* !NDBM */
 #ifdef HAVE_GDBM_H
 	if (dblog)
-	  db = gdbm_open(VDB ".pag" /* Catenates these strings */, 8192,
-			 iflag ? GDBM_NEWDB : GDBM_WRITER,
-			 S_IRUSR|S_IWUSR, NULL );
+		db = gdbm_open(VDB ".pag" /* Catenates these strings */, 8192,
+			       iflag ? GDBM_NEWDB : GDBM_WRITER,
+			       S_IRUSR|S_IWUSR, NULL );
 #else
 	if (dblog)
-	  db = dbopen(VDB ".db", iflag ? (O_RDWR|O_CREAT) : O_RDWR,
-		      S_IRUSR|S_IWUSR, DB_BTREE, NULL);
+		db = dbinit(VDB); /* XX: old DBM ? */
 #endif
 #endif
-
-	ret = EX_OK;
-
 	if (dblog && !db) {
-	  fprintf(stderr, "vacation: %s.* database file(s): %s\n", 
-		  VDB, strerror(errno));
-	  exit(EX_CANTCREAT);
+		fprintf(stderr, "vacation: %s.* database file(s): %s\n", 
+			VDB, strerror(errno));
+		exit(EX_CANTCREAT);
 	}
 
 	if (interval != -1)
-	  setinterval(interval);
+		setinterval(interval);
 
-	if (!iflag) {
-
-	  cur = (ALIAS *)malloc((u_int)sizeof(ALIAS));
-	  if (!cur) {
-	    ret = EX_TEMPFAIL;
-	  } else {
-	    cur->name = pw->pw_name;
-	    cur->next = names;
-	    names = cur;
-
-	    /* read message from standard input (just from line) */
-	    readheaders();
-	    purge_input();
-	    if (!recent()) {
-	      setreply();
-	      sendmessage(msgfile,pw->pw_name);
-	    }
-	  }
-	}
-
+	if (iflag) {
 #ifdef	HAVE_NDBM_H
-	if (dblog)
-	  dbm_close(db);
+		if (dblog)
+			dbm_close(db);
 #else
 #ifdef HAVE_GDBM_H
-	if (dblog)
-	  gdbm_close(db);
+		if (dblog)
+			gdbm_close(db);
 #else
-	if (dblog)
-	  db->close(db);
+		if (dblog)
+			XX: eh, what ?
 #endif
 #endif
+		exit(EX_OK);
+	}
 
-	exit(ret);
+	if (!(cur = (ALIAS *)malloc((u_int)sizeof(ALIAS)))) {
+		exit(EX_TEMPFAIL);
+	}
+	cur->name = pw->pw_name;
+	cur->next = names;
+	names = cur;
+
+	/* read message from standard input (just from line) */
+	readheaders();
+	purge_input();
+	if (!recent()) {
+		setreply();
+		if (dblog)
+			dbm_close(db);
+		sendmessage(msgfile,pw->pw_name);
+	}
+	if (dblog)
+		dbm_close(db);
+	exit(EX_OK);
 }
 /*
 **  SENDMESSAGE -- send a message to a particular user.
@@ -324,7 +296,7 @@ main(argc, argv)
 **		sends mail to 'user' using /usr/lib/sendmail.
 */
 
-static void
+void
 sendmessage(msgf, myname)
 	const char *msgf;
 	const char *myname;
@@ -553,7 +525,7 @@ findme:			for (cur = names; !tome && cur; cur = cur->next)
  * nsearch --
  *	do a nice, slow, search of a string for a substring.
  */
-static int
+int
 nsearch(name, str)
 	register char *name, *str;
 {
@@ -569,21 +541,16 @@ nsearch(name, str)
  * junkmail --
  *	read the header and return if automagic/junk/bulk mail
  */
-static int
+int
 junkmail()
 {
 	static struct ignore {
 		const char	*name;
 		int		len;
 	} ignore[] = {
-		{ "-request", 8 },
-		{ "postmaster", 10 },
-		{ "uucp", 4 },
-		{ "mailer-daemon", 13 },
-		{ "mailer", 6 },
-		{ "-relay", 6 },
-		{ NULL, 0 }
-		
+		"-request", 8,		"postmaster", 10,	"uucp", 4,
+		"mailer-daemon", 13,	"mailer", 6,		"-relay", 6,
+		NULL, 0
 	};
 	register struct ignore *cur;
 	register int len;
@@ -638,8 +605,7 @@ purge_input()
  *	find out if user has gotten a vacation message recently.
  *	use memcpy for machines with alignment restrictions
  */
-static int
-recent()
+int recent()
 {
 	DBT key, data;
 	time_t then, next;
@@ -655,8 +621,7 @@ recent()
 #ifdef HAVE_GDBM_H
 	data = gdbm_fetch(db, key);
 #else
-	if (db->get(db, &key, &data, 0) != 0)
-	  data.dptr = NULL;
+    XX:XX:XX:XX:XX:XX:XX:XX
 #endif
 #endif
 	if (data.dptr == NULL)
@@ -673,8 +638,7 @@ recent()
 #ifdef HAVE_GDBM_H
 	data = gdbm_fetch(db, key);
 #else
-	if (db->get(db, &key, &data, 0) != 0)
-	  data.dptr = NULL;
+    XX:XX:XX:XX:XX:XX:XX:XX
 #endif
 #endif
 	if (data.dptr) {
@@ -707,7 +671,6 @@ setinterval(interval)
 #ifdef HAVE_GDBM_H
 	gdbm_store(db, key, data, GDBM_REPLACE);
 #else
-	db->put(db, &key, &data, 0);
 #endif
 #endif
 }
@@ -735,7 +698,6 @@ setreply()
 #ifdef HAVE_GDBM_H
 	gdbm_store(db, key, data, GDBM_REPLACE);
 #else
-	db->put(db, &key, &data, 0);
 #endif
 #endif
 }
@@ -743,6 +705,6 @@ setreply()
 void
 usage()
 {
-	fprintf(stderr,"vacation: [-i] [-d] [-a alias] [-m msgfile] [-r interval] {login | 'start' | 'stop' }\n");
+	fprintf(stderr,"vacation: [-i] [-d] [-a alias] [-m msgfile] [-r interval] login\n");
 	exit(EX_USAGE);
 }

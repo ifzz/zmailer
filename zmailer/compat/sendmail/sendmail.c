@@ -87,48 +87,6 @@ FILE	*mfp = NULL;
 	  cp = newcp;						\
 	}
 
-
-void usage()
-{
-  
-  fprintf(stderr, "Usage: %s [sendmail options] [recipient addresses]\n", progname);
-  fprintf(stderr, "  ZMailer's sendmail recognizes and implements following options:\n\
-     -B bodytype  -  Valid values: 8BITMIME, 7BIT\n\
-     -C conffile  -  specifies config file (meaningfull for -bt)\n\
-     -E           -  flag 'external' source\n\
-     -F 'full name'  sender's full name string\n\
-     -N notifyopt -  Notify option(s): NEVER or a set of: SUCCESS,DELAY,FAILURE\n\
-     -P priority# -  numeric priority for ZMailer router queue pre-selection\n\
-     -R returnopt -  Error report return option, either of: FULL, HDRS\n\
-     -U           -  Flag as 'user submission'\n\
-     -V envidstring - XTEXT encoded ENVID string\n\
-     -b?          -  operational mode flags\n\
-     -bd          -  starts smtpserver in daemon mode\n\
-     -bi          -  runs 'newaliases' command\n\
-     -bm          -  deliver mail; always :-)\n\
-     -bp          -  runs 'mailq' command\n\
-     -bs          -  speak smtp; runs smtpserver in interactive mode\n\
-     -bt          -  starts router in interactive test mode\n\
-     -e*             (ignored)\n\
-     -f fromaddr  -  sets envelope from address for the message\n\
-     -i           -  on inputs from tty this will ignore SMTP-like dot-EOF\n\
-     -m           -  send a copy of the message to the sender too (ignored)\n\
-     -o*          -  multiple options; those not listed cause error\n\
-     -oQ queuedir -  defines POSTOFFICE directory for message submission\n\
-     -ob*            (ignored)\n\
-     -od*            (ignored)\n\
-     -oe*            (ignored)\n\
-     -oi          -  alias of '-i' option\n\
-     -or*            (ignored)\n\
-     -p submitprotocol - value for 'with' label at 'Received:' header\n\
-     -q*          -  queue processing commands (ignored)\n\
-     -r fromaddr  -  (alternate for -f)\n\
-     -t           -  scan message rfc822 headers for recipient addresses\n\
-     -v           -  verbose trace of processing\n");
-  
-}
-
-
 extern int main __((int argc, const char *argv[]));
 int
 main(argc, argv)
@@ -155,8 +113,6 @@ main(argc, argv)
 	char	*returnopt = NULL;
 	char	*envidstr = NULL;
 	const char * newcp = NULL;
-	int	save_from = 0;
-	int	outcount = 0;
 
 	cp = strrchr(argv[0], '/');
 	if (cp != NULL)
@@ -194,12 +150,6 @@ main(argc, argv)
 			/* Sendmail 8.7 compability:
 			   -B8BITMIME */
 			bodytype = optarg;
-			if (strcasecmp(bodytype,"8BITMIME") != 0 &&
-			    strcasecmp(bodytype,"7BIT") != 0 &&
-			    strcasecmp(bodytype,"BINARYMIME") != 0) {
-			  fprintf(stderr,"sendmail: unrecognized -B option parameter value: '%s'\n",bodytype);
-			  exit(EX_USAGE);
-			}
 			break;
 		case 'J': break; /* Sony NEWS OS  JIS-conversion option,
 				    ignore */
@@ -338,18 +288,11 @@ main(argc, argv)
 			verbose = 1;
 			break;
 		case 's':	/* save From_ lines */
-			save_from = 1;
+			sprintf(ebp, " -%c", c);
+			ebp += strlen(ebp);
 			break;
 		case 'p':
 			submitprotocol = optarg;
-			for (;*optarg;++optarg) {
-			  int c = (*optarg) & 0xFF;
-			  if ('0' <= c && c <= '9') continue;
-			  if ('A' <= c && c <= 'Z') continue;
-			  if ('z' <= c && c <= 'z') continue;
-			  fprintf(stderr,"sendmail: only alphanumeric characters accepted for -p option parameter: '%s'\n",submitprotocol);
-			  exit(EX_USAGE);
-			}
 			break;
 		case 'P':
 			mail_priority = atoi(optarg);
@@ -381,7 +324,8 @@ otherprog:
 				zmailer);
 	}
 	if (errflg) {
-		usage();
+		fprintf(stderr, "Usage: %s [sendmail options]\n",
+				       progname);
 		exit(EX_USAGE);
 	}
 	n = 0;
@@ -599,7 +543,6 @@ otherprog:
 		  while ((n = read(0, buf, sizeof buf)) > 0) {
 		    if (fwrite(buf, sizeof buf[0], n, mfp) != n)
 		      break;
-		    outcount += n;
 		  }
 		} else {
 		  /* cmd line can only set dotiseof to 0.. improvement? */
@@ -630,7 +573,7 @@ otherprog:
 			s[0] = '\n';
 			s[1] = 0;
 		      }
-		      if (!save_from && strncmp(buf,"From ",5)==0) {
+		      if (strncmp(buf,"From ",5)==0) {
 			/* [mea@utu.fi] I vote for
 			   removing this line if next
 			   is a RFC-header */
@@ -639,7 +582,7 @@ otherprog:
 			strcpy(buf2,buf);
 			continue;
 		      }
-		      if (!save_from && strncmp(buf,">From ",6)==0) {
+		      if (strncmp(buf,">From ",6)==0) {
 			/* [mea@utu.fi] I vote for
 			   removing this line if next
 			   is a RFC-header */
@@ -671,7 +614,6 @@ otherprog:
 		    if (dotiseof && *s == '.' && *++s == '\n')
 		      break;
 		    fputs(buf, mfp);
-		    ++outcount;
 		  }
 		}
 
@@ -685,12 +627,6 @@ otherprog:
 		  if (vfd >= 0)
 		    unlink(verbfile);
 		  exit(EX_IOERR);
-		} else if (outcount == 0) {
-		  /* No input ?? Ignore silently */
-		  mail_abort(mfp);
-		  if (vfd >= 0)
-		    unlink(verbfile);
-		  exit(EX_OK);
 		} else if (mail_close(mfp) == EOF) {
 		  fprintf(stderr, "%s: message not submitted!\n",
 			  zmailer);

@@ -14,7 +14,7 @@ CPPDEP=		@CPPDEP@
 DEFS=		@DEFS@
 TOPDIR=	..
 RANLIB=		@RANLIB@
-ZSH_INCL=	@GENINCL@
+ZSH_INCL=	
 ZSH_LIB=	
 #
 INCL=		-I$(srcdir)/$(TOPDIR)/include -I$(TOPDIR)/include -I$(TOPDIR) -I.
@@ -25,7 +25,7 @@ LIBMALLOC=	@LIBMALLOC@
 LIBMALLOCDEB=	$(TOPDIR)/libs/libmalloc_d.a-a
 LIB=		-L$(TOPDIR)/libs -lsh -lz -lzc  $(LIBMALLOC)
 LIBDEB=		$(TOPDIR)/libs/libtag
-CFLAGS=		$(COPTS) $(CPPFLAGS) $(ZSHDEFS) $(DEFS) $(ZSH_INCL) $(INCL)
+CFLAGS=		$(COPTS) $(CPPFLAGS) $(ZSHDEFS) $(DEFS) $(INCL) $(ZSH_INCL)
 
 SSLRUN = $(SSL) -D short -h sh.sst.h -t sh.sst.c -e sh.entry -l sh.lst $(srcdir)/sh.ssl
 
@@ -105,8 +105,6 @@ sh.entry: $(srcdir)/sh.ssl $(SSL)
 
 $(SSL):
 	cd $(TOPDIR)/ssl ; $(MAKE) $(MFLAGS)
-
-zmsh.o: $(srcdir)/zmsh.c sh-out.i
 
 sh-out.i: sh.sst.h
 	awk 'BEGIN{delay=3;running=0;}			\

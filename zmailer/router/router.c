@@ -59,8 +59,6 @@ int	origoptind;
 int	savefile = 0;
 const char * zshopts = "-O";
 int	nosyslog = 1;
-int	routerdirloops = 0;
-int	do_hdr_warning = 0;
 
 int
 main(argc, argv)
@@ -94,7 +92,7 @@ main(argc, argv)
 
 
 	while (1) {
-		c = getopt(argc, (char*const*)argv, "m:n:dikf:o:t:L:P:r:sSVW");
+		c = getopt(argc, (char*const*)argv, "m:n:dikf:o:t:L:P:sSV");
 		if (c == EOF)
 			break;
 	  
@@ -161,14 +159,6 @@ main(argc, argv)
 		case 'V':
 			version = 1;
 			break;
-		case 'W':
-			do_hdr_warning = !do_hdr_warning;
-			break;
-		case 'r':
-			routerdirloops = atoi(optarg);
-			if (routerdirloops < 0)
-				routerdirloops = 0;
-			break;
 		case '?':
 		default:
 			errflg++;
@@ -222,8 +212,9 @@ main(argc, argv)
 
 	if (logfn != NULL) {
 		/* loginit is a signal handler, so can't pass log */
-		if (loginit(SIGHUP) < 0) /* do setlinebuf() there */
+		if (loginit(0) < 0)	/* do setlinebuf() there */
 			die(1, "log initialization failure");
+		signal(SIGHUP, sig_hup); /* close and reopen log files */
 	} else
 		signal(SIGHUP, SIG_IGN); /* no surprises please */
 
@@ -291,7 +282,7 @@ main(argc, argv)
 		    /* parent */
 		  }
 		  printf("%s: number %d started as pid %d\n",
-			 progname, router_id, (int)getpid());
+			 progname, router_id, getpid());
 		  router_id = getpid();
 		}
 		else
@@ -428,7 +419,7 @@ login_to_uid(name)
 	struct passwd *pw;
 	uid_t uid;
 	char buf[BUFSIZ];
-	char *cp;
+	char *cp, *fn;
 	struct spblk *spl;
 
 	spl = lookup_incoresp(name, spt_loginmap);
@@ -442,7 +433,7 @@ login_to_uid(name)
 		} else {
 			uid = pw->pw_uid;
 			cp = strsave(pw->pw_name);
-			sp_install(uid, cp, 0L, spt_uidmap);
+			sp_install(uid, cp, 0, spt_uidmap);
 			fullname(pw->pw_gecos,buf,sizeof buf,pw->pw_name);
 			add_incoresp(cp, buf, spt_fullnamemap);
 		}
@@ -462,9 +453,9 @@ uidpwnam(uid)
 	struct spblk *spl;
 	char buf[BUFSIZ];
 
-	spl = sp_lookup((u_long)uid, spt_uidmap);
+	spl = sp_lookup((u_int)uid, spt_uidmap);
 	if (spl == NULL) {
-		pw = getpwuid((uid_t)uid);
+		pw = getpwuid(uid);
 		if (pw == NULL) {
 			/* memory shall be temporary in
 			   its nature for this data! */
@@ -478,7 +469,7 @@ uidpwnam(uid)
 			addd_incoresp(pw->pw_name, (void*)((long)(pw->pw_uid)), spt_loginmap);
 			fullname(pw->pw_gecos,buf, sizeof buf, pw->pw_name);
 			add_incoresp(pw->pw_name, buf, spt_fullnamemap);
-			sp_install((u_int)uid, cp, 0L, spt_uidmap);
+			sp_install((u_int)uid, cp, 0, spt_uidmap);
 			stickymem = oval;
 		}
 	} else
@@ -642,13 +633,12 @@ logit(file, id, from, to)
 		 id, file, from, to);
 	else
 	  printf("%.200s: file: %.150s %.250s\n", id, file, to);
-	if (!nosyslog) {
+	if (!nosyslog)
 	  if (flen > 0)
 	    zsyslog((LOG_INFO, "%.200s: file: %.150s %.200s => %.200s",
 		     id, file, from, to));
 	  else
 	    zsyslog((LOG_INFO, "%.200s: file: %.150s %.200s", id, file, to));
-	}
 #endif
 }
 

@@ -4,7 +4,6 @@
  */
 
 #include "hostenv.h"
-#include "zmsignal.h"
 
 #ifndef HAVE_STRSIGNAL
 

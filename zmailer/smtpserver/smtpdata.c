@@ -11,8 +11,8 @@
  *
  * The basic commands:
  *
- *  - DATA (RFC 821)
- *  - BDAT (RFC 1830)
+ *  - DATA
+ *  - BDAT
  *
  */
 
@@ -44,11 +44,6 @@ const char *buf, *cp;
     time_t mtime;
     int ino;
     char msg[2048];
-
-    if (*cp != 0 && STYLE(SS->cfinfo,'R')) {
-      type(SS, 501, m554, "Extra junk after 'DATA' verb");
-      return 0;
-    }
 
     if (SS->state != RecipientOrData) {
 	switch (SS->state) {
@@ -128,11 +123,7 @@ const char *buf, *cp;
 	typeflush(SS);
     } else if (s_feof(SS)) {
 	/* [mea@utu.fi] says this can happen */
-	if (STYLE(SS->cfinfo,'D')) {
-	  /* Says: DON'T DISCARD -- aka DEBUG ERRORS! */
-	  mail_close_alternate(SS->mfp,"public",".DATA-EOF");
-	} else
-	  mail_abort(SS->mfp);
+	mail_abort(SS->mfp);
 	SS->mfp = NULL;
 	reporterr(SS, tell, "premature EOF on DATA input");
 	typeflush(SS);
@@ -249,7 +240,7 @@ const char *buf, *cp;
 	SS->mvbstate = -1;
     }
     *msg = 0;
-    rc = sscanf(cp, "%ld %7s %7s", &bdata_chunksize, msg, msg + 20);
+    rc = sscanf(cp, "%ld %7s %7s", &bdata_chunksize, msg, msg + 8);
     SS->bdata_blocknum += 1;
     bdata_last = CISTREQ(msg, "LAST");
     if (!(bdata_chunksize > 0L
@@ -329,11 +320,7 @@ const char *buf, *cp;
 	type(SS, 452, "%s", msg);
     } else if (s_feof(SS)) {
 	/* [mea@utu.fi] says this can happen */
-	if (STYLE(SS->cfinfo,'D')) {
-	  /* Says: DON'T DISCARD -- aka DEBUG ERRORS! */
-	  mail_close_alternate(SS->mfp,"public",".BDAT-EOF");
-	} else
-	  mail_abort(SS->mfp);
+	mail_abort(SS->mfp);
 	SS->mfp = NULL;
 	reporterr(SS, tell, "premature EOF on BDAT input");
 	typeflush(SS);

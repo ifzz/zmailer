@@ -35,7 +35,7 @@
    remains the value 0.  The bits are given in alphabetical order, and
    the definitions shifted by one from the previous bit; thus, when we
    add or remove a bit, only one other definition need change.  */
-typedef unsigned long reg_syntax_t;
+typedef unsigned reg_syntax_t;
 
 /* If this bit is not set, then \ inside a bracket expression is literal.
    If set, then such a \ quotes the following character.  */
@@ -406,7 +406,7 @@ extern reg_syntax_t re_set_syntax _RE_ARGS ((reg_syntax_t syntax));
    and syntax given by the global `re_syntax_options', into the buffer
    BUFFER.  Return NULL if successful, and an error string if not.  */
 extern const char *re_compile_pattern
-  _RE_ARGS ((const char *pattern, size_t length,
+  _RE_ARGS ((const char *pattern, int length,
              regex_t *buffer));
 
 

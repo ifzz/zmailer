@@ -34,21 +34,12 @@
 #endif
 #include <sys/types.h>
 #include <sys/stat.h>
-#ifdef HAVE_STRING_H
-#include <string.h>
-#else
-#ifdef HAVE_STRINGS_H
-#include <strings.h>
-#endif
-#endif
 
 #include "malloc.h"
 #include "libz.h"
 #include "ta.h"
 
-#ifndef strdup
 extern char *strdup();
-#endif
 #ifndef strchr
 extern char *strchr();
 #endif
@@ -183,9 +174,9 @@ append_header(va_alist)
 #endif
 {
 	va_list pvar;
-	char lbuf[2000]; /* XX: SHOULD be enough..  damn vsprintf()..*/
-	u_int linelen;
-	u_int linecnt;
+	char linebuf[2000]; /* XX: SHOULD be enough..  damn vsprintf()..*/
+	int linelen;
+	int linecnt;
 	char ***hdrpp, **hdrp2;
 
 #ifdef HAVE_STDARG_H
@@ -198,17 +189,17 @@ append_header(va_alist)
 	rp  = va_arg(pvar, struct rcpt*);
 	fmt = va_arg(pvar, char *);
 #endif
-	lbuf[0] = 0;
+	linebuf[0] = 0;
 
 #ifdef HAVE_VSNPRINTF
-	vsnprintf(lbuf, sizeof(lbuf)-1, fmt, pvar);
+	vsnprintf(linebuf, sizeof(linebuf)-1, fmt, pvar);
 #else
-	vsprintf(lbuf, fmt, pvar);
+	vsprintf(linebuf, fmt, pvar);
 #endif
 	va_end(pvar);
 
-	linelen = strlen(lbuf);
-	if (linelen > sizeof(lbuf)) {
+	linelen = strlen(linebuf);
+	if (linelen > sizeof(linebuf)) {
 	  exit(240); /* BUG TIME! */
 	}
 
@@ -228,7 +219,7 @@ append_header(va_alist)
 
 	if (!hdrp2) return -1;
 	hdrp2[linecnt] = (char*) emalloc(linelen+3);
-	memcpy(hdrp2[linecnt],lbuf,linelen+2);
+	memcpy(hdrp2[linecnt],linebuf,linelen+2);
 	hdrp2[++linecnt] = NULL;
 	*hdrpp = hdrp2;
 	return linecnt;
@@ -546,6 +537,7 @@ char **ct_linep;	/* Could be multiline! */
 	  }
 	}
 	/*NOTREACHABLE*/
+	abort();
 }
 
 struct cte_data *

@@ -47,7 +47,6 @@
 #include <netdb.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
-#include <arpa/inet.h>
 #include <fcntl.h>
 #include <sys/file.h>
 #endif	/* HAVE_SOCKET */
@@ -228,7 +227,9 @@ main(argc, argv)
 	  }
 	  hp = gethostbyname(host);
 	  if (hp == NULL) {
-	    if (inet_pton(AF_INET, host, &naddr.s_addr) == 1) {
+	    naddr.s_addr = inet_addr(host);
+	    if (naddr.s_addr != -1) {
+	      naddr.s_addr = ntohl(naddr.s_addr);
 	      hp = gethostbyaddr((void*)&naddr, sizeof(naddr), AF_INET);
 	      if (hp == NULL){
 		hp = &he;

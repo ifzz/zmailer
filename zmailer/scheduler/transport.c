@@ -33,7 +33,6 @@
 
 extern int forkrate_limit;
 extern int freeze;
-extern int mailqmode;
 
 static int  scheduler_nofiles = -1; /* Will be filled below */
 static int  runcommand __((const char **, struct vertex *, struct web *, struct web*));
@@ -42,9 +41,6 @@ static void reclaim __((int, int));
 static void waitandclose __((int));
 static void readfrom __((int));
 
-static struct mailq *mq2root  = NULL;
-static int           mq2count = 0;
-static int	     mq2max   = 20; /* How many can live simultaneously */
 
 #ifdef  HAVE_WAITPID
 # include <sys/wait.h>
@@ -532,8 +528,7 @@ static void reclaim(fromfd, tofd)
 
 if (verbose)
   fprintf(stderr,"reclaim(%d,%d) pid=%d, reaped=%d, chan=%s, host=%s\n",
-	  fromfd,tofd,(int)proc->pid,proc->reaped,
-	  proc->ch->name,proc->ho->name);
+	  fromfd,tofd,proc->pid,proc->reaped,proc->ch->name,proc->ho->name);
 
 	proc->pid = 0;
 	proc->reaped = 0;
@@ -685,16 +680,6 @@ typedef	struct fd_set { fd_mask	fds_bits[1]; } fd_set;
 #define _Z_FD_ISSET(i,var) ((var & (1 << i)) != 0)
 #endif
 
-
-extern int mq2add_to_rdmask __((fd_set *, int));
-
-int mq2add_to_rdmask(maskp, maxfd)
-fd_set *maskp;
-int maxfd;
-{
-  return maxfd;
-}
-
 int in_select = 0;
 
 int
@@ -783,7 +768,7 @@ time_t timeout;
 	    i = accept(querysocket, (struct sockaddr *)&raddr, &raddrlen);
 	    if (i < 0) {
 	      perror("accept");
-	    } else if (mailqmode == 1) {
+	    } else {
 	      rc = fork();
 	      if (rc == 0) { /* Child! */
 		close(querysocket);
@@ -804,8 +789,6 @@ time_t timeout;
 	      /* if (rc > 0)
 		 ++numkids; */
 	      close(i);
-	    } else {
-	      /* XXX: mailqmode == 2 ?? */
 	    }
 	  }
 	  if (cpids != NULL) {
@@ -843,7 +826,6 @@ queryipccheck()
 	  int	n;
 	  fd_set	mask;
 	  struct timeval tv;
-	  int maxfd = querysocket;
 
 	  tv.tv_sec = 0;
 	  tv.tv_usec = 0;
@@ -851,11 +833,7 @@ queryipccheck()
 	  _Z_FD_ZERO(mask);
 	  _Z_FD_SET(querysocket, mask);
 
-	  if (mailqmode == 2) {
-	    maxfd = mq2add_to_rdmask(&mask, maxfd);
-	  }
-
-	  n = select(maxfd+1, &mask, NULL, NULL, &tv);
+	  n = select(querysocket+1, &mask, NULL, NULL, &tv);
 	  if (n > 0 &&
 	      _Z_FD_ISSET(querysocket, mask)) {
 	    struct sockaddr_in raddr;
@@ -863,28 +841,24 @@ queryipccheck()
 
 	    n = accept(querysocket, (struct sockaddr *)&raddr, &raddrlen);
 	    if (n >= 0) {
-	      if (mailqmode == 1) {
-		int pid = fork();
-		if (pid == 0) {
+	      int pid = fork();
+	      if (pid == 0) {
 #if defined(F_SETFD)
-		  fcntl(n, F_SETFD, 1); /* close-on-exec */
+		fcntl(n, F_SETFD, 1); /* close-on-exec */
 #endif
 #ifdef HAVE_TCPD_H /* TCP-Wrapper code */
-		  if (wantconn(n, "mailq") == 0) {
-		    char *msg = "refusing 'mailq' query from your whereabouts\r\n";
-		    int   len = strlen(msg);
-		    write(n,msg,len);
-		    _exit(0);
-		  }
-#endif
-		  qprint(n);
-		  /* Silence memory debuggers about this child's
-		     activities by doing exec() on the process.. */
-		  /* execl("/bin/false","false",NULL); */
-		  _exit(0); /* _exit() should be silent too.. */
+		if (wantconn(n, "mailq") == 0) {
+		  char *msg = "refusing 'mailq' query from your whereabouts\r\n";
+		  int   len = strlen(msg);
+		  write(n,msg,len);
+		  _exit(0);
 		}
-	      } else {
-		/* XXX: mailqmode == 2 */
+#endif
+		qprint(n);
+		/* Silence memory debuggers about this child's
+		   activities by doing exec() on the process.. */
+		/* execl("/bin/false","false",NULL); */
+		_exit(0); /* _exit() should be silent too.. */
 	      }
 	      close(n);
 	    }
@@ -1017,7 +991,7 @@ static void readfrom(fd)
 	      *cp = '\0';
 	      if (verbose)
 		fprintf(stderr, "%d fd=%d processed: %s\n",
-			(int)proc->pid,fd, pcp);
+			proc->pid,fd, pcp);
 	      update(fd,pcp);
 	      *cp = '_';
 	      pcp = cp + 1;

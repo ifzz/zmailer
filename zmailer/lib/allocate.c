@@ -153,7 +153,7 @@ static int mmmallocs[MEMTYPES];
 static void
 moremem(n, i)
 	const u_int n;
-	register const memtypes i;
+	const register memtypes i;
 {
 	register struct block *bp, *bprev;
 	register int stackflag;
@@ -382,11 +382,8 @@ setlevel(memtype, up)
 	const memtypes memtype;
 	const univptr_t up;
 {
-	register struct block *bp;
+	register struct block *bp, **bpp;
 	register const char *s = (const char *) up;
-#ifdef TMALLOC_DEBUGGING
-	register struct block**bpp;
-#endif
 
 	if (!(stackmem & (1<<memtype)) || blockfull[memtype] != NULL) {
 	  printf("Memory type %d is not usable as a stack!\n",

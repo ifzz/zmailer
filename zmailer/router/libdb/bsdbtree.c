@@ -2,7 +2,7 @@
  *	Copyright 1988 by Rayan S. Zachariassen, all rights reserved.
  *	This will be free software, but only when it is finished.
  *
- *	Copyright 1996-1998 Matti Aarnio
+ *	Copyright 1996-1997 Matti Aarnio
  */
 
 /* LINTLIBRARY */
@@ -12,11 +12,7 @@
 #ifdef HAVE_FCNTL_H
 # include <fcntl.h>
 #endif
-#ifdef HAVE_DB_185_H
-# include <db_185.h>	/* This code is in fact for BSD DB 1.85, ... */
-#else
-# include <db.h>	/* ... NOT for BSD DB 2.* if that is in the system! */
-#endif
+#include <db.h>
 #include <sys/file.h>
 #include "search.h"
 #include "io.h"
@@ -26,6 +22,7 @@
 
 extern int errno;
 extern int deferit;
+
 
 static BTREEINFO BINFO = { 0, 2560, 0, 0, 0, NULL,  NULL, 0 };
 
@@ -64,7 +61,7 @@ open_btree(sip, flag, comment)
 	int flag;
 	const char *comment;
 {
-	DB *db = NULL;
+	DB *db;
 	struct spblk *spl;
 	spkey_t symid;
 	int i;
@@ -110,7 +107,9 @@ search_btree(sip)
 	DB *db;
 	DBT val, key;
 	conscell *tmp;
+	struct spblk *spl;
 	int retry, rc;
+	spkey_t symid;
 	char *us;
 
 	retry = 0;
@@ -119,7 +118,7 @@ reopen:
 	if (db == NULL)
 	  return NULL; /* Huh! */
 
-	key.data = (void*)sip->key;
+	key.data = (char*)sip->key;
 	key.size = strlen(sip->key) + 1;
 	rc = (db->get)(db, &key, &val, 0);
 	if (rc != 0) {
@@ -152,9 +151,9 @@ add_btree(sip, value)
 	if (db == NULL)
 		return EOF;
 
-	key.data = (void*)sip->key;
+	key.data = (char*)sip->key;
 	key.size = strlen(sip->key) + 1;
-	val.data = (void*)value;
+	val.data = (char*)value;
 	val.size = strlen(value)+1;
 	rc = (db->put)(db, &key, &val, 0);
 	if (rc < 0) {
@@ -183,7 +182,7 @@ remove_btree(sip)
 	if (db == NULL)
 		return EOF;
 
-	key.data = (void*)sip->key;
+	key.data = (char*)sip->key;
 	key.size = strlen(sip->key) + 1;
 	rc = (db->del)(db, &key, 0);
 	if (rc < 0) {

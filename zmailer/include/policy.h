@@ -82,14 +82,9 @@ struct policy_user {
 #define P_A_LocalDomain		16
 #define P_A_InboundSizeLimit	17
 #define P_A_OutboundSizeLimit	18
-#define P_A_FullTrustNet        19
-#define P_A_TrustRecipients	20
-#define P_A_TrustWhosOn		21
-#define P_A_RcptDnsRBL		22
-#define P_A_TestRcptDnsRBL	23
 
 #define P_A_FirstAttr	        2
-#define P_A_LastAttr	        23
+#define P_A_LastAttr	        18
 /* Note: Attribute codes outside range 1..31 cause problems at policystate
          processing!  If you ever need modify these, fix the  policytest.c,
 	 and  policytest.h: struct policystate { char values[]; } array,
@@ -134,11 +129,6 @@ static char *_KA[] = {
 	"localdomain",
 	"maxinsize",
 	"maxoutsize",
-	"fulltrustnet",
-	"trustrecipients",
-	"trust-whoson",
-	"rcpt-dns-rbl",
-	"test-rcpt-dns-rbl"
 };
 #define KA(x) ((((x)>0)&&((x)<=P_A_LastAttr))?_KA[(x) & 0xFF]:"??")
 

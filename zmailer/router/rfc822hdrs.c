@@ -25,9 +25,6 @@
 struct headerinfo nullhdr = { 0, nilHeaderSemantics, nilUserType, normal };
 int D_rfc822 = 0; /* Debug traceing */
 
-extern int do_hdr_warning; /* If set, headers with errors in them are
-			      printed "as is" -- h_line */
-
 /*
  * Apply RFC822 scanner and parser to the list of Line tokens passed as args.
  *
@@ -418,19 +415,11 @@ hdr_print(h, fp)
 	token822 *t;
 	struct address *ap;
 	struct addr *pp;
-	HeaderSemantics sem;
 
 	if (h == NULL)
 		return;
-
-	sem = h->h_descriptor->semantics;
-
-	if (h->h_stamp == BadHeader)
-	  sem = nilHeaderSemantics;
-
 	col = 1 + strlen(h->h_pname);
-
-	switch (sem) {
+	switch (h->h_descriptor->semantics) {
 	case Address:
 	case Addresses:
 	case AddressList:
@@ -456,7 +445,7 @@ hdr_print(h, fp)
 		fprintf(fp, "%s:", h->h_pname);
 		break;
 	}
-	switch (sem) {
+	switch (h->h_descriptor->semantics) {
 	case Received:
 		if (h->h_lines != NULL) {
 			/* Write out the original lines if possible */
@@ -596,9 +585,6 @@ hdr_nilp(h)
 {
 	if (h == NULL)
 		return 1;
-
-	if (h->h_stamp != BadHeader) {
-
 	switch (h->h_descriptor->semantics) {
 	case DateTime:
 		return h->h_contents.d == 0;
@@ -620,9 +606,6 @@ hdr_nilp(h)
 	default:
 		break;
 	}
-
-	}
-
 	return h->h_lines == NULL;
 }
 
@@ -704,31 +687,22 @@ printAddress(fp, pp, onlylength)
 				if (pp->p_type == reSync && t->t_next != NULL
 				    && (t->t_next->t_type == t->t_type
 					|| *(t->t_next->t_pname) == '<')) {
-				  if (onlylength)
-				    ++onlylength;
-				  else
-				    putc(' ', fp);
+					if (onlylength) ++onlylength;
+					else putc(' ', fp);
 				}
 				break;
 			case aSpecial:
-				if (t != pp->p_tokens && *(t->t_pname) == '<'){
-				  if (onlylength)
-				    ++onlylength;
-				  else
-				    putc(' ', fp);
-				}
-				if (onlylength)
-				  ++onlylength;
-				else
-				  putc((*t->t_pname), fp);
+				if (t != pp->p_tokens && *(t->t_pname) == '<')
+					if (onlylength) ++onlylength;
+					else putc(' ', fp);
+				if (onlylength) ++onlylength;
+				else putc((*t->t_pname), fp);
 				break;
 			}
 		}
 		if (pp->p_type == aComment || pp->p_type == anError) {
-			if (onlylength)
-			  ++onlylength;
-			else
-			  putc(')', fp);
+			if (onlylength) ++onlylength;
+			else putc(')', fp);
 		} else if (lastp == pp)
 			inAddress = 0;
 		if (!inAddress && pp->p_next != NULL

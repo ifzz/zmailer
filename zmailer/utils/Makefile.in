@@ -7,60 +7,33 @@ MAILBIN=	$(prefix)@MAILBIN@
 srcdir=         @srcdir@
 VPATH=          @srcdir@
 
-CC=		@CC@
-COPTS=		@CFLAGS@
-CPPFLAGS=	@CPPFLAGS@
-CPPDEP=		@CPPDEP@
-TOPDIR=		..
-MAILBIN=	$(prefix)@MAILBIN@
-DEFS=		@DEFS@
-INSTALL=	@INSTALL@
-#
-INCL=		-I$(srcdir)/$(TOPDIR)/include -I$(TOPDIR)/include -I$(TOPDIR) -I$(srcdir)/$(TOPDIR)/libsh -I$(TOPDIR)/libsh -I.
-CFLAGS=		$(COPTS) $(CPPFLAGS) $(DEFS) $(ROUTER_INCL) $(INCL)
-LIBMALLOC=	@LIBMALLOC@
-LIBMALLOCDEB=	$(TOPDIR)/libmalloc/libmalloc_d.a-a
-#
-LIB=		-L$(TOPDIR)/libs -lzmdb -lsh -lz -lzc $(LIBMALLOC)
-LIBDEB=		$(TOPDIR)/libs/libtag
-
-BINS=	autoanswer.pl policy-builder.sh rotate-logs.sh		\
+BINS=	autoanswer.pl policy-builder.sh make-incore.sh \
 	$(srcdir)/make-incore.sh $(srcdir)/bitbucket
 
-all:	listexpand
+all:
 	cd makedb ; $(MAKE) $(MFLAGS)
 	cd vacation ; $(MAKE) $(MFLAGS)
 
 install:
-	@for BIN in $(BINS); do					\
-		if [ ! -f $(MAILBIN)/$$BIN ] ; then		\
-			$(INSTALL) -m 755 $$BIN  $(MAILBIN) ;	\
-		else						\
-			echo "*** No overwrite of $$BIN, already exists!" ; \
-		fi ;						\
+	for BIN in $(BINS); do \
+		if [ ! -f $$BIN ] ; then \
+			$(INSTALL) -m 755 $$BIN  $(MAILBIN) ; \
+		fi ; \
 	done
-	@$(INSTALL) -m 755 $(srcdir)/bitbucket $(MAILBIN)/ta
-	@$(INSTALL) -m 755 listexpand $(MAILBIN)/ta
-	@cd makedb ; $(MAKE) $(MFLAGS) install
-	@cd vacation ; $(MAKE) $(MFLAGS) install
-
-.c.o:
-	$(CC) $(CFLAGS) -c $<
-
-listexpand:	listexpand.o
-	$(CC) $(CFLAGS) -o $@.x listexpand.o $(LIB)
-	mv $@.x $@
+	$(INSTALL) -m 755 $(srcdir)/bitbucket $(MAILBIN)/ta
+	cd makedb ; $(MAKE) $(MFLAGS) install
+	cd vacation ; $(MAKE) $(MFLAGS) install
 
 FRC:
 
+
 clean:	FRC
-	rm -f ./+* *~ *.o listexpand
+	rm -f ./+* *~
 	cd vacation ; $(MAKE) $(MFLAGS) clean
 	cd makedb ; $(MAKE) $(MFLAGS) clean
 
 distclean: clean
 	rm -f Makefile autoanswer.pl policy-builder.sh zmailer.init.sh
-	rm -f rotate-logs.sh
 	cd vacation ; $(MAKE) $(MFLAGS) distclean
 	cd makedb ; $(MAKE) $(MFLAGS) distclean
 

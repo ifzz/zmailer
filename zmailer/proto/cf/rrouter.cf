@@ -71,7 +71,7 @@ rrouter (address, origaddr, A, plustail, domain) {
 #	\\(.+)	return (((local - "$address" $A))) ;;
 	@	# handle <> form ???
 		tmp=(local user postmaster $A)
-		return $(routeuser $tmp "$plustail" "")
+		return $(routeuser $tmp "")
 		;;
 
 ## -----------------------------------------------------------------
@@ -213,7 +213,7 @@ rrouter (address, origaddr, A, plustail, domain) {
 	\\(.+)	# A back-quote prefixed userid (most likely)
 		#return $(rrouter "\1" "$origaddr" $A "$plustail" "")
 		tmp=(local "$origaddr" "$address" $A)
-		return $(routeuser $tmp "$plustail" "")
+		return $(routeuser $tmp "")
 		;;
 
 	/.+	# file
@@ -227,7 +227,7 @@ rrouter (address, origaddr, A, plustail, domain) {
 		# We must test this here, because the file-path after
 		# this prefix may have a dot!
 		tmp=(local "$origaddr" "$address" $A)
-		return $(routeuser $tmp "$plustail" "")
+		return $(routeuser $tmp "")
 		;;
 	# Ok, from now on if we don't have a domain set, we use $mydomain
 	.*	if [ -z "$domain" ] ; then
@@ -235,16 +235,6 @@ rrouter (address, origaddr, A, plustail, domain) {
 		fi
 		;;
 	tfiss
-
-# ------- begin new "localpart" processing
-
-	tmp=(local "$origaddr" "$address" $A)
-	return $(routeuser $tmp "$plustail" "$domain")
-
-# ------- end new "localpart" processing
-# ------- rest of the function is never run...
-
-
 	tsift "$address" in
 	(.+\.[^+]+)(\+.+)  # Dotfull name with a plus!
 		plustail="\2"
@@ -263,7 +253,7 @@ rrouter (address, origaddr, A, plustail, domain) {
 			# It can be found from the normal aliases,
 			# run the alias processing!
 			tmp=(local "$origaddr" "$address" $A)
-			return $(routeuser $tmp "$plustail" "$domain")
+			return $(routeuser $tmp "$domain")
 		fi
 		return (((error norealname "$address" $A)))
 		return (((error nonewsgroup "$address" $A)))
@@ -271,7 +261,7 @@ rrouter (address, origaddr, A, plustail, domain) {
 
 	.*	# Now all the rest of the cases..
 		tmp=(local "$origaddr" "$address$plustail" $A)
-		return $(routeuser $tmp "$plustail" "$domain")
+		return $(routeuser $tmp "$domain")
 		;;
 	tfist
 }	# end of rrouter
@@ -279,11 +269,11 @@ rrouter (address, origaddr, A, plustail, domain) {
 routes_spec (domain, address, A) {
 	local tmp channel rscshost
 
-	ssift "$domain" in
-#	(bsmtp3nd|bsmtp3|bitnet2|bitnet2deliver2)!(.+)!(.+)
-	(bsmtp3nd|bsmtp3|bsmtp3rfc|bsmtp3ndrfc)!(.+)!(.+)
+	tsift "$domain" in
+#	(bsmtp3nd|bsmtp3|bitnet2|bitnet2deliver2)!(.)!(.)
+	(bsmtp3nd|bsmtp3|bsmtp3nd|bsmtp3rfc|bsmtp3ndrfc)!(.)!(.)
 		return ((("\1" "\2@\3" "$address" $A))) ;;
-	(defrt1)!(.+)
+	(defrt1)!(.)
 		channel="\1"
 		rscshost="\2"
 
@@ -309,21 +299,6 @@ routes_spec (domain, address, A) {
 			;;
 		tfist
 		;;
-	smtpx!
-		tsift "$address" in
-		(.*)@(.+)
-			return (((smtpx "\2" "$address" $A)))
-			;;
-		tfist
-		;;
-	(smtpgw.*)!
-		tmp="\1"
-		tsift "$address" in
-		(.*)@(.+)
-			return ((($tmp "\1" "$address" $A)))
-			;;
-		tfist
-		;;
 	dns!
 		tsift "$address" in
 		(.*)@(.+)
@@ -331,10 +306,10 @@ routes_spec (domain, address, A) {
 			;;
 		tfist
 		;;
-	(.+)!
+	(.?)!
 		return ((("\1" - "$address" $A)))
 		;;
-	lotusgw!(.+)!(.+)
+	lotusgw!(.)!(.)
 		# Map user@domain to user%gwdom@gateway
 		tmp="\1"; channel="\2" # Variable name reuse..
 		tsift "$address" in
@@ -343,17 +318,17 @@ routes_spec (domain, address, A) {
 			;;
 		tfist
 		;;
-	delay!(.+)
+	delay!(.)
 		# NB! envelopeinfo *must* also be defined in interactive mode
 		tmp="$(/bin/expr $(get envelopeinfo now) + "\1")"
 		return (((hold "$tmp" "$address" $A))) ;;
-	(.+)!([^!]+)
+	(.?)!([^!]+)
 		return ((("\1" "\2" "$address" $A))) ;;
-	(.+)!(.+)
+	(.?)!(.+)
 		# BEWARE LOOPS
 		return $(rrouter "\2!$(uucproute "$address")" "$address" $A "" "$domain")
 		;;
-	tfiss
+	tfist
 	return 1
 }
 

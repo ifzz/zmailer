@@ -13,8 +13,6 @@ struct policystate {		/* Part of SmtpState structure */
     int always_reject;
     int always_freeze;
     int always_accept;
-    int full_trust;
-    int trust_recipients;
     int sender_reject;
     int sender_freeze;
     int relaycustnet;
@@ -26,20 +24,15 @@ struct policystate {		/* Part of SmtpState structure */
        Corresponding flag is 3rd bit (1 << 3) = 8.
        Flag P_A_ALIAS ( == 1) is ignored.            */
     int request;
-    int origrequest;
     /* Attribute values are stored here. */
     char values[P_A_LastAttr+1];
 
     /* The lattest result message (line) */
     char *message;
     char *msgstr;
-    char *rblmsg;
     long maxinsize;
     long maxoutsize;
     int  islocaldomain;
-#ifdef HAVE_WHOSON_H
-    int whoson_result;
-#endif
 };
 
 
@@ -103,7 +96,7 @@ typedef enum {
  */
 
 extern void policydefine __((struct policytest ** relp, const char *dbtype, const char *dbpath));
-extern int policyinit __((struct policytest ** relp, struct policystate * ps, int whoson_result));
+extern int policyinit __((struct policytest ** relp, struct policystate * ps));
 extern int policytest __((struct policytest * rel, struct policystate * ps, PolicyTest how, const char *str, const int len));
 extern int policytestaddr __((struct policytest * rel, struct policystate * ps, PolicyTest how, Usockaddr * raddr));
 extern char *policymsg __((struct policytest *rel, struct policystate *ps));
@@ -113,10 +106,3 @@ extern struct policytest *policydb;
 
 /* contentpolicy.c */
 extern int contentpolicy __((struct policytest *rel, struct policystate *ps, const char *fname));
-
-#ifdef _POLICYTEST_INTERNAL_
-extern int mx_client_verify  __((int, const char *, int));
-extern int sender_dns_verify __((int, const char *, int));
-extern int client_dns_verify __((int, const char *, int));
-extern int rbl_dns_test __((u_char *, char **));
-#endif

@@ -36,7 +36,7 @@
 #include <sys/types.h>
 
 /* This is for other GNU distributions with internationalized messages.  */
-#if defined(HAVE_LIBINTL_H) || defined (_LIBC)
+#if HAVE_LIBINTL_H || defined (_LIBC)
 # include <libintl.h>
 #else
 # define gettext(msgid) (msgid)
@@ -2204,12 +2204,11 @@ regex_compile (pattern, size, syntax, bufp)
             case ')':
               if (syntax & RE_NO_BK_PARENS) goto normal_backslash;
 
-              if (COMPILE_STACK_EMPTY) {
+              if (COMPILE_STACK_EMPTY)
                 if (syntax & RE_UNMATCHED_RIGHT_PAREN_ORD)
                   goto normal_backslash;
                 else
                   FREE_STACK_RETURN (REG_ERPAREN);
-	      }
 
             handle_close:
               if (fixup_alt_jump)
@@ -2225,12 +2224,11 @@ regex_compile (pattern, size, syntax, bufp)
                 }
 
               /* See similar code for backslashed left paren above.  */
-              if (COMPILE_STACK_EMPTY) {
+              if (COMPILE_STACK_EMPTY)
                 if (syntax & RE_UNMATCHED_RIGHT_PAREN_ORD)
                   goto normal_char;
                 else
                   FREE_STACK_RETURN (REG_ERPAREN);
-	      }
 
               /* Since we just checked for an empty stack above, this
                  ``can't happen''.  */
@@ -5097,7 +5095,7 @@ bcmp_translate (s1, s2, len, translate)
 const char *
 re_compile_pattern (pattern, length, bufp)
      const char *pattern;
-     size_t length;
+     int length;
      struct re_pattern_buffer *bufp;
 {
   reg_errcode_t ret;

@@ -163,6 +163,7 @@ static volatile const char *ident_sockuser2(s,local,remote,realbuf,realbuflen)
   register int buflen;
   register int w;
   register int saveerrno;
+  char ch;
   int rlocal;
   int rremote;
   register int fl;
@@ -257,8 +258,8 @@ static void sig_alrm __((int));
 static void sig_alrm (sig)
 	int sig;
 {
-	SIGNAL_RELEASE(sig);
-	SIGNAL_HANDLE(sig, sig_alrm);
+	SIGNAL_RELEASE(SIGALRM);
+	SIGNAL_HANDLE(SIGALRM, sig_alrm);
 	longjmp(jmpalarm,1);
 }
 
@@ -278,7 +279,7 @@ volatile const char *ident_tcpuser9(af,len,inlocal,inremote,local,remote,timeout
   int saveerrno;
   void (*old_sig)__((int));
   void (*old_alrm)__((int));
-  volatile unsigned int oldival = 0;
+  unsigned int oldival = 0;
   volatile const char *retval;
   
   SIGNAL_HANDLESAVE(SIGPIPE, SIG_IGN, old_sig);

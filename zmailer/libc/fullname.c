@@ -8,11 +8,6 @@
 #include <stdio.h>
 #include <ctype.h>
 
-#ifndef __STDC__
-#define const
-#endif
-
-
 extern char *getenv();
 
 

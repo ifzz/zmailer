@@ -128,7 +128,7 @@ SmtpState *SS;
     fromfp = fdopen(from[0], "r");
 
     /* stuff a command to print something recognizable down the pipe */
-    sprintf(promptbuf, "%d# ", (int)getpid());
+    sprintf(promptbuf, "%d# ", getpid());
     promptlen = strlen(promptbuf);
 
     /*

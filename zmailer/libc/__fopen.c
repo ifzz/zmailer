@@ -17,7 +17,6 @@ extern int errno;
 # define __(x) x
 #else
 # define __(x) ()
-# define const
 #endif
 
 

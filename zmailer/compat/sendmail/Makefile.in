@@ -9,7 +9,7 @@ CC=		@CC@
 COPTS=		@CFLAGS@
 CPPFLAGS=	@CPPFLAGS@
 DEFS=		@DEFS@
-SENDMAIL_INCL=	@GENINCL@
+SENDMAIL_INCL=
 SENDMAIL_LIB=	@LIBRESOLV@ @LIBSOCKET@
 TOPDIR=		../..
 MAILBIN=	@MAILBIN@
@@ -20,8 +20,9 @@ MKDIR=		@MKDIR@
 INCL=           -I$(srcdir)/$(TOPDIR)/include -I$(TOPDIR)/include -I$(TOPDIR)
 LIB=            -L$(TOPDIR)/libs -lz -lzc
 LIBDEB=         $(TOPDIR)/libs/libtag
-CFLAGS=         $(COPTS) $(CPPFLAGS) $(DEFS) $(SENDMAIL_INCL) $(INCL)
+CFLAGS=         $(COPTS) $(CPPFLAGS) $(DEFS) $(INCL) $(SENDMAIL_INCL)
 SENDMAILPATH=	$(prefix)@SENDMAILPATH@
+USRLIB=         $(prefix)$(SENDMAILLIB)
 
 SOURCE=		sendmail.c
 
@@ -46,11 +47,10 @@ version.c: $(srcdir)/sendmail.c $(TOPDIR)/Makefile
 # comment (loudly!) to the user --- who on earth can have
 # any modern system without symlinks ?
 install: $(LIBDEB) sendmail
-	@sdir=`echo $(SENDMAILPATH)|sed -e 's!^\(.*\)/\([^/]*\)$$!\1!'`; $(MKDIR) $$sdir;echo "  sdir = $$sdir"
-	@$(INSTALL) -m 0755 sendmail $(prefix)$(MAILBIN)/sendmail.x ; \
+	sdir=`echo $(SENDMAILPATH)|sed -e 's!^\(.*\)/\([^/]*\)$$!\1!'`; $(MKDIR) $$sdir;echo "  sdir = $$sdir"
+	$(INSTALL) -m 0755 sendmail $(prefix)$(MAILBIN)/sendmail.x ; \
 	mv $(prefix)$(MAILBIN)/sendmail.x $(prefix)$(MAILBIN)/sendmail
-	@if [ $(LN_S) = "ln -s" -a				\
-	     "$(SENDMAILPATH)" != "$(MAILBIN)/sendmail" ]; then \
+	@if [ $(LN_S) = "ln -s" ]; then				\
 	    if [ -h $(SENDMAILPATH) ]; then			\
 		test -f $(SENDMAILPATH) &&			\
 			rm -f $(SENDMAILPATH) ;			\

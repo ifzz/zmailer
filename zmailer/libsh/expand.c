@@ -216,7 +216,7 @@ glut(cwd, pwd, bp, recur, swp)
 		i;
 	struct stat stbuf;
 	struct dirent *dp;
-	DIR *dirp = NULL;
+	DIR *dirp;
 	
 	if (interrupted)
 		return 0;
@@ -271,8 +271,8 @@ again:
 			havepattern = 1;
 			break;
 		}
-	if ((*cwd == '\0' && (dirp = opendir(".")) == NULL) ||
-	    (*cwd != '\0' && (dirp = opendir((char *)cwd)) == NULL)) {
+	if ((*cwd == '\0' && (dirp = opendir(".")) == (DIR *)0)
+	    || (*cwd != '\0' && (dirp = opendir((char *)cwd)) == (DIR *)0)) {
 		perror((char *)cwd);
 		return 0;
 	}
@@ -605,11 +605,9 @@ expand(d)
 		pav = &cdr(s_last(*pav));
 	}
 	*pav = NULL;
-#ifdef CONSCELL_PREV
 	if (orig->prev != globbed->prev) {
 		s_set_prev(orig->prev, globbed);
 		globbed->pflags = orig->pflags;
 	}
-#endif
 	return globbed;
 }

@@ -26,11 +26,7 @@
 #undef datum
 #endif
 #ifdef HAVE_DB_H
-#ifdef HAVE_DB_185_H
-# include <db_185.h>
-#else
-# include <db.h>
-#endif
+#include <db.h>
 #endif
 
 #define PROG "makedb"
@@ -46,7 +42,6 @@ int   verbose     = 0;
 int   append_mode = 0;
 int   lc_key	  = 0;
 int   uc_key      = 0;
-int   silent      = 0;
 
 /* extern char *strchr(); */
 
@@ -58,7 +53,7 @@ void usage(prog, errs, err)
 const char *prog, *errs;
 int err;
 {
-	fprintf(stderr, "Usage: %s [-l|-u]] [-A][-a|-p][-s] dbtype database.name [infilename|-]\n", prog);
+	fprintf(stderr, "Usage: %s [-l|-u]] [-A][-a|-p] dbtype database.name [infilename|-]\n", prog);
 	fprintf(stderr, "  where supported dbtypes are:");
 #ifdef HAVE_NDBM_H
 	fprintf(stderr, " ndbm");
@@ -70,13 +65,7 @@ int err;
 	fprintf(stderr, " btree bhash");
 #endif
 	fprintf(stderr, "\n");
-	fprintf(stderr, " Error now: %s", errs);
-	if (err != 0) {
-	  fprintf(stderr, ", errno=%d (%s)", err, strerror(err));
-	  fprintf(stderr, "\n");
-	  exit(1);
-	}
-	fprintf(stderr, "\n\n  If no infilename is defined, database.name is assumed.\n");
+	fprintf(stderr, "  If no infilename is defined, database.name is assumed.\n");
 #ifdef HAVE_NDBM_H
 	fprintf(stderr, "  (NDBM appends  .pag, and .dir  into actual db file names..)\n");
 #endif
@@ -88,18 +77,17 @@ int err;
 	fprintf(stderr, "  (BHASH appends .pag, and .dir into actual db file names..)\n");
 #endif
 	fprintf(stderr, "\n");
-
-	fprintf(stderr,
-"  The '-a' option is for parsing input that comes in\n\
-  'aliases' format:  'key: data,in,long,line,'\n\
-                     '  with,indented,extended,lines'\n\
-  The '-p' option is for parsing smtpserver policy database.\n\
-  The '-A' option APPENDS new data to existing keyed data.\n\
-  The '-l' and '-u' will lower-/uppercasify key string before\n\
-    storing it into the database.  This does not apply to '-p'.\n\
-  The '-s' option orders 'silent running' -- report only errors.\n");
-
-	exit(64);
+	fprintf(stderr, "  The '-a' option is for parsing input that comes in\n");
+	fprintf(stderr, "  'aliases' format:  'key: data,in,long,line,'\n");
+	fprintf(stderr, "                     '  with,indented,extended,lines'\n");
+	fprintf(stderr, "  The '-p' option is for parsing smtpserver policy database.\n");
+	fprintf(stderr, "  The '-A' option APPENDS new data to existing keyed data.\n");
+	fprintf(stderr, "  The '-l' and '-u' will lower-/uppercasify key string before\n");
+	fprintf(stderr, "    storing it into the database.  This does not apply to '-p'.\n");
+	fprintf(stderr, " Error now: %s", errs);
+	fprintf(stderr, ", errno=%d (%s)", err, strerror(err));
+	fprintf(stderr, "\n");
+	exit(1);
 }
 
 
@@ -625,9 +613,8 @@ const int typ;
 		if (t0) free(t0);  t0 = NULL;
 		if (s0) free(s0);  s0 = NULL;
 	}
-	if (!silent)
-	  fprintf(stdout, "%d aliases, longest %d bytes, %ld bytes total\n",
-		  count, longest, totsize);
+	fprintf(stdout, "%d aliases, longest %d bytes, %ld bytes total\n",
+		count, longest, totsize);
 	return errflag;
 }
 
@@ -723,7 +710,7 @@ char *argv[];
 
     progname = argv[0];
 
-    while ((c = getopt(argc, argv, "Aalpsuv")) != EOF) {
+    while ((c = getopt(argc, argv, "Aalpuv")) != EOF) {
 	switch (c) {
 	case 'l':
 	    lc_key = 1;
@@ -739,9 +726,6 @@ char *argv[];
 	    break;
 	case 'p':
 	    policyinput = 1;
-	    break;
-	case 's':
-	    silent = 1;
 	    break;
 	case 'v':
 	    verbose = 1;

@@ -6,7 +6,7 @@ router \- zmailer message routing daemon
 .SH SYNOPSIS
 .B router
 [
-.B \-diksSVW
+.B \-diksSV
 ]
 [
 .B \-f
@@ -19,10 +19,6 @@ router \- zmailer message routing daemon
 [
 .B \-o
 .I zmshoptions
-]
-[
-.B \-r
-.I routerdirloops
 ]
 [
 .B \-t
@@ -101,13 +97,6 @@ mandatory.  See
 for the available options.
 .IP \-P\ \fIpostoffice\fR
 specifies an alternate \fIPOSTOFFICE\fR directory.
-.IP \-r\ \fIrouterdirloops\fR
-Process \fIrouterdirloops\fR messages out of any alternate router
-directories, then check to see if any higher-priority jobs have been
-created. If undefined and alternate router directories are in use, the
-router will clear the entire directory before returning. See below and 
-.IR zmailer (3)
-about Z-Environment and \fIROUTERDIRS\fR.
 .IP \-S
 Can be used to turn off non-serious syslogging.
 .IP \-s
@@ -125,11 +114,6 @@ The currently known options are: \fBassign\fR, \fBbind\fR,
 \fBrewrite\fR, \fBrouter\fR, and \fBsequencer\fR.
 .IP \-V
 print version message and run interactively.
-.IP \-W
-Warn about syntax errors in the RFC-822 headers when this option is on.
-Without this, bad headers are shown in their original form, not by
-rendering them thru any formatting RFC-822 engine.
-.I This deviates from old behaviour of the ZMailer major way!
 .PP
 To restart a
 .I router

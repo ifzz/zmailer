@@ -32,7 +32,7 @@
    (A PostScript rendered version is on Zmailers  doc/aix-bsdport.ps)
 
 */
-#if (defined(AIX) || defined(_AIX)) && !defined(_AIX41)
+#if defined(AIX) || defined(_AIX)
 
 #include <sys/types.h>
 #include <sys/param.h>

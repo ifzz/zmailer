@@ -86,71 +86,68 @@ struct db_kind {
 		  count_core,
 		  owner_core,
 		  NULL,
-		  Nul,
-		  NULL } },
+		  Nul } },
 { "header",	{ NULL, NULL, 0, 0, 0, NULL, search_header, close_header,
 		  add_header, remove_header, print_header, count_header,
-		  owner_header, NULL, Nul, NULL } },
+		  owner_header, NULL, Nul } },
 { "unordered",	{ NULL, NULL, 0, 10, 0, NULL, search_seq, close_seq,
 		  add_seq, NULL, print_seq, count_seq, owner_seq, modp_seq,
-		  Nul, NULL } },
+		  Nul } },
 #ifndef	HAVE_MMAP
 { "ordered",	{ NULL, NULL, 0, 10, 0, NULL, search_bin, close_seq,
 		  NULL, NULL, print_seq, count_seq, owner_seq, modp_seq,
-		  Nul, NULL } },
+		  Nul } },
 #else /* HAVE_MMAP */ /* When using MMAP(), no cache is needed for ordered.. */
 { "ordered",	{ NULL, NULL, 0, 0, 0, NULL, search_bin, close_seq,
 		  NULL, NULL, print_seq, count_seq, owner_seq, modp_seq,
-		  Nul, NULL } },
+		  Nul } },
 #endif
 
 #ifdef	HAVE_RESOLVER
 { "hostsfile",	{ "/etc/hosts", NULL, 0, 10, 0, NULL, search_hosts, NULL,
-		  NULL, NULL, print_hosts, NULL, NULL, NULL, Nul, NULL } },
+		  NULL, NULL, print_hosts, NULL, NULL, NULL, Nul } },
 #endif	/* HAVE_RESOLVER */
 #ifdef	HAVE_RESOLVER
 #ifndef RESOLV_CONF
 # define RESOLV_CONF "/etc/resolv.conf"
 #endif
-{ "bind",	{ RESOLV_CONF, NULL, 0, 10, 0, NULL, search_res, NULL, NULL,
-		    NULL, NULL, NULL, NULL, NULL, Nul, NULL }},
+{ "bind",	{ RESOLV_CONF, NULL, 0, 10, 0, NULL,
+		  search_res, NULL, NULL, NULL, NULL, NULL, NULL, NULL, Nul }},
 #endif	/* HAVE_RESOLV */
-{ "selfmatch",	{ NULL, NULL, 0, 0, 0, NULL, search_selfmatch, NULL, NULL,NULL,
-		  print_selfmatch, count_selfmatch, NULL, NULL, Nul, NULL } },
+{ "selfmatch",	{ NULL, NULL, 0, 0, 0, NULL, search_selfmatch, NULL, NULL,
+		  NULL, print_selfmatch, count_selfmatch, NULL, NULL, Nul } },
 #ifdef	HAVE_NDBM_H
 { "ndbm",	{ NULL, NULL, 0, 10, 0, NULL, search_ndbm, close_ndbm,
 		  add_ndbm, remove_ndbm, print_ndbm, count_ndbm, owner_ndbm,
-		  modp_ndbm, Nul, NULL } },
+		  modp_ndbm, Nul } },
 #endif	/* HAVE_NDBM */
 #ifdef	HAVE_GDBM_H
 { "gdbm",	{ NULL, NULL, 0, 10, 0, NULL, search_gdbm, close_gdbm,
 		  add_gdbm, remove_gdbm, print_gdbm, count_gdbm, owner_gdbm,
-		  modp_gdbm, Nul, NULL } },
+		  modp_gdbm, Nul } },
 #endif	/* HAVE_GDBM */
 #ifdef	HAVE_DBM
 { "dbm",	{ NULL, NULL, 0, 10, 0, NULL, search_dbm, close_dbm,
 		  add_dbm, remove_dbm, print_dbm, count_dbm, owner_dbm,
-		  NULL, Nul, NULL } },
+		  NULL, Nul } },
 #endif	/* HAVE_DBM */
 #ifdef	HAVE_DB_H
 { "btree",	{ NULL, NULL, 0, 10, 0, NULL, search_btree, close_btree,
 		  add_btree, remove_btree, print_btree, count_btree,
-		  owner_btree, modp_btree, Nul, NULL } },
+		  owner_btree, modp_btree, Nul } },
 { "bhash",	{ NULL, NULL, 0, 10, 0, NULL, search_bhash, close_bhash,
 		  add_bhash, remove_bhash, print_bhash, count_bhash,
-		  owner_bhash, modp_bhash, Nul, NULL } },
+		  owner_bhash, modp_bhash, Nul } },
 #endif	/* HAVE_DB_H */
 #ifdef	HAVE_YP
-{ "yp",		{ NULL, NULL, 0, 10, 0, NULL, search_yp, NULL, NULL,
-		  NULL, print_yp, NULL, owner_yp, NULL, Nul, NULL } },
+{ "yp",		{ NULL, NULL, 0, 10, 0, NULL, search_yp, NULL,
+		  NULL, NULL, print_yp, NULL, owner_yp, NULL, Nul } },
 #endif	/* HAVE_YP */
 #ifdef HAVE_LDAP
 { "ldap",	{ NULL, NULL, 0, 10, 0, NULL, search_ldap, close_ldap,
-		  NULL, NULL, NULL, NULL, NULL, modp_ldap, Nul, NULL } },
+		  NULL, NULL, NULL, NULL, NULL, modp_ldap, Nul } },
 #endif
-{ NULL, { NULL, NULL, 0, 0, 0, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
-	    /* proto_config is initialized from this entry */
-	    NULL, NULL, Nul, NULL }}
+{ 0 }	/* proto_config is initialized from this entry */
 };
 
 
@@ -275,12 +272,11 @@ run_relation(argc, argv)
 		for (dbkp = &db_kinds[0];
 		     dbkp < &db_kinds[(sizeof db_kinds)/sizeof (struct db_kind)];
 		     ++dbkp) {
-		  if (dbkp->name != NULL) {
+		  if (dbkp->name != NULL)
 		    if (dbkp == &db_kinds[0])
 		      fprintf(stderr,"%s",dbkp->name);
 		    else
 		      fprintf(stderr,",%s",dbkp->name);
-		  }
 		}
 		fprintf(stderr,"\n");
 		return 1;
@@ -504,7 +500,7 @@ run_db(argc, argv)
 	const char *argv[];
 {
 	int errflag;
-	struct db_info *dbip = NULL;
+	struct db_info *dbip;
 	search_info si;
 	struct spblk *spl;
 

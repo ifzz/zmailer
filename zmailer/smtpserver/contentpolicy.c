@@ -17,11 +17,7 @@
 #include <sys/types.h>
 #include <fcntl.h>
 #ifdef HAVE_DB_H
-#ifdef HAVE_DB_185_H
-# include <db_185.h>
-#else
-# include <db.h>
-#endif
+#include <db.h>
 #endif
 #ifdef HAVE_NDBM_H
 #define datum Ndatum

@@ -52,7 +52,6 @@
 #include "libz.h"
 #include "ta.h"
 #include "splay.h"
-#include "sieve.h"
 
 #ifdef  HAVE_WAITPID
 # include <sys/wait.h>
@@ -214,6 +213,7 @@ const char *maildirs[] = {
 					 && (R)->status != EX_OK \
 					 && (R)->status != EX_TEMPFAIL) ? \
 					      EX_UNAVAILABLE : (E), 0, (A1), (A2))
+
 #define	DIAGNOSTIC3(R,U,E,A1,A2,A3)   diagnostic((R), \
 					(*(U) == TO_PIPE \
 					 && (R)->status != EX_OK \
@@ -321,14 +321,12 @@ extern char *exists __((const char *, const char *, struct rcpt *));
 extern void setrootuid __((struct rcpt *));
 extern void process __((struct ctldesc *dp));
 extern void deliver __((struct ctldesc *dp, struct rcpt *rp, const char *userbuf, const char *timestring));
+extern void program __((struct ctldesc *dp, struct rcpt *rp, const char *userbuf, const char *timestring));
 extern FILE *putmail __((struct ctldesc *dp, struct rcpt *rp, int fdmail, const char *fdopmode, const char *timestring, const char *file));
 extern int appendlet __((struct ctldesc *dp, struct rcpt *rp, FILE *fp, const char *file, int ismime));
 extern char **environ;
 extern int writebuf __((struct writestate *, const char *buf, int len));
 extern int writemimeline __((struct writestate *, const char *buf, int len));
-
-
-extern int program __((struct ctldesc *dp, struct rcpt *rp, const char *cmdbuf, const char *usernam, const char *timestring, int pipeuid));
 
 static int do_return_receipt_to = 0;
 static void  return_receipt __((struct ctldesc *dp, const char *retrecpaddr, const char *uidstr));
@@ -430,8 +428,6 @@ main(argc, argv)
 	  maildirs[0] = s;
 	  maildirs[1] = NULL;
 	}
-
-	umask(002);
 
 	errflg = 0;
 	logfile = NULL;
@@ -834,13 +830,9 @@ int iuid;
 	case L_ERROR:
 	  cp = "Something other than EEXIST happened";
 	  break;
-#ifdef L_MANLOCK /* Some Debian version has copied this mechanism,
-		    but has done imperfect job on it..  I hope they
-		    don't do ``enum'' on these error codes. [mea] */
 	case L_MANLOCK:
 	  cp = "cannot set mandatory lock on temp lockfile";
 	  break;
-#endif
 	default:
 	  sprintf(errbuf, "maillock() error %d", i);
 	  cp = errbuf;
@@ -951,20 +943,6 @@ const char *file;
  *	     errors and requests for further processing in the structure
  */
 
-#ifndef __STDC__
-extern void store_to_file();
-#else
-extern void store_to_file(struct ctldesc *dp, struct rcpt *rp,
-			  const char *file, int ismbox, const char *usernam,
-			  struct stat *st, uid_t uid,
-#if	defined(HAVE_SOCKET)
-			  struct biffer *nbp,
-#endif
-			  time_t starttime,
-			  const char *timestring
-			  );
-#endif
-
 void
 deliver(dp, rp, usernam, timestring)
 	struct ctldesc *dp;
@@ -974,7 +952,8 @@ deliver(dp, rp, usernam, timestring)
 {
 	register const char **maild;
 	int fdmail;
-	long uid;
+	uid_t uid;
+	FILE *fp;
 	int hasdir;
 	struct stat st, s2;
 	const char *file = NULL;
@@ -989,26 +968,24 @@ deliver(dp, rp, usernam, timestring)
 #endif
 	const char *unam = usernam;
 	struct passwd *pw = NULL;
-	time_t starttime;
+	const char *mboxlocks = getzenv("MBOXLOCKS");
+	const char *filelocks = NULL;
+	const char *locks     = NULL;
+	time_t starttime, endtime;
 
 	time(&starttime);
 	notary_setxdelay(0); /* Our initial speed estimate is
 				overtly optimistic.. */
 
-	if (sscanf(rp->addr->misc,"%ld",&uid) != 1) {
-	  char buf[1000];
-	  if (verboselog) {
-	    fprintf(verboselog,"mailbox: User recipient address privilege code invalid (non-numeric!): '%s'\n",rp->addr->misc);
-	  }
-	  sprintf(buf,"x-local; 500 (User recipient address privilege code invalid [non-numeric!]: '%.200s')", rp->addr->misc);
-	  notaryreport(NULL,"failed",
-		       "5.3.0 (User address recipient privilege code invalid)",
-		       buf);
-	  DIAGNOSTIC(rp, usernam, EX_SOFTWARE,
-		     "Non-numeric recipient privilege code: \"%s\"", rp->addr->misc);
-	  return;
-	}
+	if (mboxlocks == NULL || *mboxlocks == 0 )
+	  mboxlocks = MBOXLOCKS_default;
 
+	if ((filelocks = strchr(mboxlocks,':')))
+	  ++filelocks;
+	else
+	  filelocks = "";
+
+	uid  = atol(rp->addr->misc);
 	plus = strchr(usernam,'+');
 	switch (*usernam) {
 	case TO_PIPE:		/* pipe to program */
@@ -1026,12 +1003,11 @@ deliver(dp, rp, usernam, timestring)
 		       "mail to program disallowed", 0);
 	    return;
 	  }
-	  program(dp, rp, usernam, "", timestring, uid);
+	  program(dp, rp, usernam, timestring);
 	  /* DIAGNOSTIC(rp, usernam, EX_UNAVAILABLE,
 	     "mailing to programs (%s) is not supported",
 	     rp->addr->user); */
 	  return;
-
 	case TO_FILE:		/* append to file */
 
 	  /* Solaris has "interesting" /dev/null -- it is a symlink
@@ -1296,132 +1272,9 @@ deliver(dp, rp, usernam, timestring)
 	}
 
 	if (verboselog)
-	  fprintf(verboselog, " ismbox=%d file='%s' usernam='%s'\n",
-		  ismbox, file, usernam);
-
-	if (ismbox) {
-
-	  struct sieve sv;
-	  memset(&sv,0,sizeof(sv));
-	  sv.pw       = pw;
-	  sv.uid      = uid;
-	  sv.pipeuid  = uid;
-	  sv.username = usernam;
-	  sv.spoolfile = file;
-
-	  rp->notifyflgs |= _DSN__DIAGDELAYMODE;
-
-	  if (sieve_start(&sv) == 0) {
-	    for (;
-		 sv.state != 0;
-		 sieve_iterate(&sv)) {
-
-	      /* XX: SIEVE PROCESSOR/ITERATOR */
-	      int cmd = sieve_command(&sv);
-
-	      switch(cmd) {
-	      case SIEVE_NOOP:
-		/* Absolutely NOTHING done with this label; end of iterator */
-		break;
-	      case SIEVE_RUNPIPE:
-		if (program(dp, rp, sv.pipecmdbuf, usernam, timestring, sv.pipeuid) != EX_OK) {
-		  /*  Possible FALSE negative ?? */
-		  /*  Tell also about SUCCESSES! */
-		  rp->notifyflgs |= _DSN_NOTIFY_SUCCESS;
-		}
-		break;
-	      case SIEVE_USERSTORE:
-		store_to_file(dp, rp, file, ismbox, usernam, &st, uid,
-#ifdef HAVE_SOCKET
-			      nbp,
-#endif
-			      starttime, timestring );
-		break;
-	      case SIEVE_DISCARD:
-		break;
-	      }
-	    }
-	    /* Cleanup of sieve processor */
-	    sieve_end(&sv);
-	  }
-
-	  /* Sieve-filter sets state mode -- keep_or_discard (<=>0) to
-	     tell what we should do to the message regarding its storage
-	     to the local message store. */
-
-	  rp->notifyflgs &= ~ _DSN__DIAGDELAYMODE;
-
-	  if (sv.keep_or_discard >= 0) {
-	    store_to_file(dp, rp, file, ismbox, usernam, &st, uid,
-#ifdef HAVE_SOCKET
-			  nbp,
-#endif
-			  starttime, timestring );
-	  } else {
-	    /* This happens only ONCE per recipient, if ever */
-	    notaryreport(rp->addr->user,"delivery",
-			 "2.2.0 (Discarded successfully)",
-			 "x-local; 250 (Discarded successfully)");
-	    DIAGNOSTIC(rp, usernam, EX_OK, "Ok", 0);
-	  }
-
-	} else {
-
-	  store_to_file(dp, rp, file, ismbox, usernam, &st, uid,
-#ifdef HAVE_SOCKET
-			nbp,
-#endif
-			starttime, timestring );
-	}
-
-	/* [Thomas Knott]  "Return-Receipt-To:" */
-	if (do_return_receipt_to) {
-	  retrecptaddr = find_return_receipt_hdr(rp);
-	  if (retrecptaddr != NULL)
-	    return_receipt(dp,retrecptaddr,rp->addr->misc);
-	}
-}
-
-void store_to_file(dp,rp,file,ismbox,usernam,st,uid,
-#ifdef HAVE_SOCKET
-		   nbp,
-#endif
-		   starttime,
-		   timestring
-		   )
-struct ctldesc *dp;
-struct rcpt *rp;
-const char *file, *usernam;
-int ismbox;
-struct stat *st;
-uid_t uid;
-#ifdef HAVE_SOCKET
-struct biffer *nbp;
-#endif
-time_t starttime;
-const char *timestring;
-{
-	int fdmail;
-	struct stat s2;
-	FILE *fp = NULL;
-	const char *mboxlocks = getzenv("MBOXLOCKS");
-	const char *filelocks = NULL;
-	const char *locks     = NULL;
-	time_t endtime;
-
-	if (mboxlocks == NULL || *mboxlocks == 0 )
-	  mboxlocks = MBOXLOCKS_default;
-
-	if ((filelocks = strchr(mboxlocks,':')))
-	  ++filelocks;
-	else
-	  filelocks = "";
-
-
-	if (verboselog)
 	  fprintf(verboselog,
-		  "To open a file with euid=%d egid=%d ismbox=%d file='%s'\n",
-		  (int)geteuid(), (int)getegid(), ismbox, file);
+		  "To open a file with euid=%d egid=%d file='%s'\n",
+		  geteuid(), getegid(), file);
 
 	fdmail = open(file, O_RDWR|O_APPEND);
 	if (fdmail < 0) {
@@ -1463,7 +1316,7 @@ const char *timestring;
 	    setrootuid(rp);
 	    return;
 	}
-	if (st->st_ino != s2.st_ino || st->st_dev != s2.st_dev ||
+	if (st.st_ino != s2.st_ino || st.st_dev != s2.st_dev ||
 	    s2.st_nlink != 1) {
 	    notaryreport(file,"failed",
 			 "5.4.5 (Lost race for mailbox file)",
@@ -1478,7 +1331,7 @@ const char *timestring;
 	alarm(180); /* Set an timed interrupt coming to us to break
 		       overlengthy file lock acquisition.. */
 
-	if (!S_ISREG(st->st_mode))
+	if (!S_ISREG(st.st_mode))
 	  /* don't lock non-files */;
 	else {
 
@@ -1520,12 +1373,12 @@ const char *timestring;
 		err = 1;
 		break;
 	    }
+	    ++locks; /* Always advance */
 	    if (err) break;
-	    ++locks; /* Advance on success only! */
 	  }
 
 	  if (err > 0) {
-	    --locks; /* Don't try to revert the failed (= last) lock! */
+	    --locks;
 	    while (locks >= mboxlocks) {
 	      switch (*locks) {
 		case '"':
@@ -1585,7 +1438,7 @@ const char *timestring;
 
 	fp = putmail(dp, rp, fdmail, "a+", timestring, file);
 	
-	if (S_ISREG(st->st_mode)) {
+	if (S_ISREG(st.st_mode)) {
 
 	  /* Previously acquired locks need to be released,
 	     preferrably in reverse order */
@@ -1622,7 +1475,6 @@ const char *timestring;
 	      lseek(fdmail,(off_t)0,SEEK_SET);
 	      lockf(fdmail, F_ULOCK, 0);
 #endif	/* HAVE_LOCKF */
-
 	      break;
 	    case 'F':
 	    case 'f':
@@ -1647,16 +1499,22 @@ const char *timestring;
 		       "2.2.0 (Delivered successfully)",
 		       "x-local; 250 (Delivered successfully)");
 	  DIAGNOSTIC(rp, usernam, EX_OK, "Ok", 0);
-	} else {
+	} else
 	  close(fdmail);
 #if	defined(HAVE_SOCKET)
-	  if (fp) {
-	    if (nbp != NULL) /* putmail() has produced a DIAGNOSTIC */
-	      nbp->offset = -1;
+	if (fp) {
+	  if (nbp != NULL) /* putmail() has produced a DIAGNOSTIC */
+	    nbp->offset = -1;
 	}
 #endif	/* BIFF || RBIFF */
+
+	/* [Thomas Knott]  "Return-Receipt-To:" */
+	if (do_return_receipt_to) {
+	  retrecptaddr = find_return_receipt_hdr(rp);
+	  if (retrecptaddr != NULL)
+	    return_receipt(dp,retrecptaddr,rp->addr->misc);
 	}
-	
+
 	return;
 }
 
@@ -1678,8 +1536,7 @@ putmail(dp, rp, fdmail, fdopmode, timestring, file)
 
 	fstat(fdmail, &st);
 
-	fp = fdopen(fdmail, fdopmode);
-	if (fp == NULL) {
+	if ((fp = fdopen(fdmail, fdopmode)) == NULL) {
 	  notaryreport(NULL,NULL,NULL,NULL);
 	  DIAGNOSTIC3(rp, file, EX_TEMPFAIL, "cannot fdopen(%d,\"%s\")",
 		      fdmail,fdopmode);
@@ -1728,7 +1585,7 @@ putmail(dp, rp, fdmail, fdopmode, timestring, file)
 	{
 	  char **hdrs = has_header(rp,"Return-Path:");
 	  if (hdrs) delete_header(rp,hdrs);
-	  append_header(rp,"Return-Path: <%.999s>", fromuser);
+	  append_header(rp,"Return-Path: <%s>", fromuser);
 
 	  hdrs = has_header(rp,"To:");
 	  if (!hdrs) {
@@ -1736,7 +1593,7 @@ putmail(dp, rp, fdmail, fdopmode, timestring, file)
 	    /* Sendmailism... */
 	    hdrs = has_header(rp,"Apparently-To:");
 	    if (hdrs) delete_header(rp,hdrs);
-	    append_header(rp,"Apparently-To: <%.999s>", rp->addr->link->user);
+	    append_header(rp,"Apparently-To: <%s>", rp->addr->link->user);
 	  }
 
 	  hdrs = has_header(rp,"X-Orcpt:");
@@ -1906,7 +1763,7 @@ putmail(dp, rp, fdmail, fdopmode, timestring, file)
 		  "%s: %ld + %ld : %s (pid %d user %s)\n",
 		  dp->logident, eofindex,
 		  (fp ? ftell(fp): 0) - eofindex, file,
-		  (int)getpid(), rp->addr->user);
+		  getpid(), rp->addr->user);
 #if 0
 	  fprintf(logfp, "%s: %ld + %ld : %s\n",
 		  dp->logident, eofindex,
@@ -1934,16 +1791,15 @@ putmail(dp, rp, fdmail, fdopmode, timestring, file)
 	return fp;
 }
 
-int
-program(dp, rp, cmdbuf, user, timestring, uid)
+void
+program(dp, rp, user, timestring)
 	struct ctldesc *dp;
 	struct rcpt *rp;
-	const char *cmdbuf;
 	const char *user;
 	const char *timestring;
-	int uid;
 {
 	int i, pid, in[2], out[2];
+	int uid = -1;
 	int gid = -1;
 	const char *env[20], *s;
 	char buf[8192], *cp, *cpe;
@@ -1970,13 +1826,18 @@ program(dp, rp, cmdbuf, user, timestring, uid)
 	  env[i++] = cp;
 	  cp += strlen(cp) + 1;
 	}
-	s = getenv("TZ");
-	if (s != NULL) {
-	  sprintf(cp,"TZ=%s", s);
-	  env[i++] = cp;
-	  cp += strlen(cp) + 1;
+	if (sscanf(rp->addr->misc,"%d",&uid) != 1) {
+	  if (verboselog) {
+	    fprintf(verboselog,"mailbox: User recipient address privilege code invalid (non-numeric!): '%s'\n",rp->addr->misc);
+	  }
+	  sprintf(buf,"x-local; 500 (User recipient address privilege code invalid [non-numeric!]: '%.200s')", rp->addr->misc);
+	  notaryreport(NULL,"failed",
+		       "5.3.0 (User address recipient privilege code invalid)",
+		       buf);
+	  DIAGNOSTIC(rp, user, EX_SOFTWARE,
+		     "Bad privilege for a pipe \"%s\"", rp->addr->misc);
+	  return;
 	}
-
 	pw = getpwuid(uid);
 	if (pw == NULL) {
 
@@ -1987,18 +1848,15 @@ program(dp, rp, cmdbuf, user, timestring, uid)
 	  notaryreport(NULL,"failed",
 		       "5.3.0 (User address recipient privilege code invalid)",
 		       buf);
-	  DIAGNOSTIC(rp, cmdbuf, EX_SOFTWARE,
+	  DIAGNOSTIC(rp, user, EX_SOFTWARE,
 		     "Bad privilege for a pipe \"%s\"", rp->addr->misc);
-	  return EX_SOFTWARE;
+	  return;
 	} else {
 	  gid = pw->pw_gid;
 	  sprintf(cp, "HOME=%.500s", pw->pw_dir);
 	  env[i++] = cp;
 	  cp += strlen(cp) + 1;
-	  if (user[0] == 0)
-	    sprintf(cp, "USER=%.100s", pw->pw_name);
-	  else
-	    sprintf(cp, "USER=%.100s", user);
+	  sprintf(cp, "USER=%.100s", pw->pw_name);
 	  env[i++] = cp;
 	  cp += strlen(cp) + 1;
 	}
@@ -2039,7 +1897,7 @@ program(dp, rp, cmdbuf, user, timestring, uid)
 
 	if (verboselog)
 	  fprintf(verboselog,"To run a pipe with uid=%d gid=%d cmd='%s'\n",
-		  uid, gid, cmdbuf);
+		  uid, gid, user);
 
 	env[i] = NULL;
 
@@ -2052,25 +1910,24 @@ program(dp, rp, cmdbuf, user, timestring, uid)
 	  notaryreport(NULL,"failed",
 		       "5.3.0 (out of pipe resources)",
 		       "x-local; 500 (out of pipe resources)");
-	  DIAGNOSTIC(rp, cmdbuf, EX_OSERR,
-		     "cannot create pipe from \"%s\"", cmdbuf);
-	  return EX_OSERR;
+	  DIAGNOSTIC(rp, user, EX_OSERR,
+		     "cannot create pipe from \"%s\"", user);
+	  return;
 	}
 	if (pipe(out) < 0) {
 	  notaryreport(NULL,"failed",
 		       "5.3.0 (out of pipe resources)",
 		       "x-local; 500 (out of pipe resources)");
-	  DIAGNOSTIC(rp, cmdbuf, EX_OSERR,
-		     "cannot create pipe to \"%s\"", cmdbuf);
+	  DIAGNOSTIC(rp, user, EX_OSERR,
+		     "cannot create pipe to \"%s\"", user);
 	  close(in[0]);
 	  close(in[1]);
-	  return EX_OSERR;
+	  return;
 	}
 
 	pid = fork();
 	if (pid == 0) { /* child */
-	  const char *argv[100];
-
+	  environ = (char**)env;
 	  setregid(gid,gid);
 	  setreuid(uid,uid);
 	  close(in[0]);
@@ -2087,94 +1944,38 @@ program(dp, rp, cmdbuf, user, timestring, uid)
 	  SIGNAL_IGNORE(SIGINT);
 	  SIGNAL_IGNORE(SIGHUP);
 	  SIGNAL_HANDLE(SIGTERM, SIG_DFL);
-
-	  /* hmm.. must split the command line to inputs for  execve();
-	     I have uses for a strict environment without  /bin/sh ... [mea] */
-
-	  cp = cmdbuf+1;
-	  s = strchr(cp,'$');
-	  if (!s)
-	    s = strchr(cp,'>');
-	  if (*cp == '/' && s == NULL) {
-	    /* Starts with an ABSOLUTE PATH -- at least "/" */
-	    /* ... and does *NOT* contain '$', nor '>' */
-	    i = 0;
-	    while (*cp != 0) {
-	      while (*cp == ' ') ++cp;
-	      if (*cp == '\'') {
-		argv[i] = ++cp;
-		while (*cp != 0 && *cp != '\'') ++cp;
-		if (*cp == '\'') *cp++ = 0;
-	      } else if (*cp != 0)
-		argv[i] = cp;
-	      ++i;
-	      while (*cp != 0 && *cp != ' ') ++cp;
-	      if (*cp == ' ') *cp++ = 0;
-	    }
-	    argv[i] = NULL;
-	    if (verboselog) {
-	      fprintf(verboselog," argv:");
-	      for (i = 0; argv[i] != NULL; ++i)
-		fprintf(verboselog," [%d]<%s>", i, argv[i]);
-	      fprintf(verboselog,"\n");
-	    }
-	    execve(argv[0], argv, env);
-
-	  } else {
-
-	    /* Duh, propably something like:
-	       "|IFS=' '&&.... "
-	    */
-
-	    /*
-	     * Note that argv[0] is set to the command we are running.
-	     * That way, we should get some better error messages, at
-	     * least more understandable in rejection messages.
-	     * Some bourne shells may go into restricted mode if the
-	     * stuff to run contains an 'r'. XX: investigate.
-	     */
-
-	    argv[0] = cmdbuf+1;
-	    argv[1] = "-c";
-	    argv[2] = cmdbuf+1;
-	    argv[3] = NULL;
-
-	    execve("/bin/sh", argv, env);
-	    /* execle(argv[0], cmdbuf+1,"-c",cmdbuf+1,(char*)NULL,env);*/
-	    execve("/sbin/sh", argv, env);
-	    /* execle(argv[0], cmdbuf+1, "-c", cmdbuf+1, (char *)NULL, env); */
-
-	  }
-
-	  write(2, "Cannot exec '", 13);
-	  write(2, argv[0], strlen(argv[0]));
-	  write(2, "'\n", 2);
+	  /*
+	   * Note that argv[0] is set to the command we are running.
+	   * That way, we should get some better error messages, at
+	   * least more understandable in rejection messages.
+	   * Some bourne shells may go into restricted mode if the
+	   * stuff to run contains an 'r'. XX: investigate.
+	   */
+	  execl("/bin/sh",  user+1, "-c", user+1, (char *)NULL);
+	  execl("/sbin/sh", user+1, "-c", user+1, (char *)NULL);
+	  write(2, "Cannot exec /bin/sh\n", 20);
 	  _exit(128);
-
 	} else if (pid < 0) {	/* fork failed */
-
 	  notaryreport(NULL,"failed",
 		       "5.3.0 (fork failure)",
 		       "x-local; 500 (fork failure)");
-	  DIAGNOSTIC(rp, cmdbuf, EX_OSERR, "cannot fork", 0);
-	  return EX_OSERR;
-
+	  DIAGNOSTIC(rp, user, EX_OSERR, "cannot fork", 0);
+	  return;
 	} /* parent */
-
 	close(out[0]);
 	close(in[1]);
 	errfp = fdopen(in[0], "r");
 	/* write the message */
 	mmdf_mode += 2;
 	eofindex = -1; /* NOT truncatable! */
-	fp = putmail(dp, rp, out[1], "a", timestring, cmdbuf);
+	fp = putmail(dp, rp, out[1], "a", timestring, user);
 	mmdf_mode -= 2;
 	if (fp == NULL) {
 	  pid = wait(&status);
 	  close(out[1]);
 	  fclose(errfp);
 	  close(in[0]);
-	  return status;
+	  return;
 	}
 	fclose(fp);
 	/* read any messages from its stdout/err on in[0] */
@@ -2212,7 +2013,7 @@ program(dp, rp, cmdbuf, user, timestring, uid)
 	  /* We report following status codes to the system as is,
 	     all the rest are treated as EX_TEMPFAIL, and retried.. */
 	  if (!(i == EX_NOPERM || i == EX_UNAVAILABLE || i == EX_NOHOST ||
-		i == EX_NOUSER || i == EX_DATAERR || i == EX_OK))
+		i == EX_NOUSER || i == EX_DATAERR))
 	    i = EX_TEMPFAIL;
 	}
 
@@ -2233,8 +2034,8 @@ program(dp, rp, cmdbuf, user, timestring, uid)
 		       buf2);
 	}
 	
-	DIAGNOSTIC(rp, cmdbuf, i, "%s", buf);
-	return i;
+	DIAGNOSTIC(rp, user, i, "%s", buf);
+	return;
 }
 
 static void mkhashpath __((char *, const char *));
@@ -2362,14 +2163,13 @@ createfile(rp, file, iuid, ismbox)
 	struct stat st;
 	char *cp, msg[BUFSIZ];
 	uid_t uid = iuid;
-	int mailmode = MAILMODE;
 
 	if (verboselog)
 	  fprintf(verboselog,
-		  "To create a file with euid=%d egid=%d file='%s', mode=%o\n",
-		  (int)geteuid(), (int)getegid(), file, mailmode);
+		  "To create a file with euid=%d egid=%d file='%s'\n",
+		  geteuid(), getegid(), file);
 
-	fd = open(file, O_RDWR|O_CREAT|O_EXCL, mailmode);
+	fd = open(file, O_RDWR|O_CREAT|O_EXCL, MAILMODE);
 	if (fd < 0) {
 	  saverrno = errno;
 	  if (verboselog)
@@ -2379,8 +2179,7 @@ createfile(rp, file, iuid, ismbox)
 	  
 	  if (errno == EEXIST)
 	    return -3;
-	  cp = strrchr(file, '/');
-	  if (cp != NULL) {
+	  if ((cp = strrchr(file, '/')) != NULL) {
 	    *cp = '\0';
 	    if (exstat(rp, file, &st, stat) < 0) {
 	      *cp = '/';
@@ -2403,16 +2202,15 @@ createfile(rp, file, iuid, ismbox)
 			   file);
 		return -2;
 	      }
-	      mailmode += 0060;
 	    }
 	  }
 
 	  if (verboselog)
 	    fprintf(verboselog,
-		    "To create a file with euid=%d egid=%d file='%s' mode=%o\n",
-		    (int)geteuid(), (int)getegid(), file, mailmode);
+		    "To create a file with euid=%d egid=%d file='%s'\n",
+		    geteuid(), getegid(), file);
 
-	  fd = open(file, O_RDWR|O_CREAT|O_EXCL, mailmode);
+	  fd = open(file, O_RDWR|O_CREAT|O_EXCL, MAILMODE);
 	  if (fd < 0) {
 	    saverrno = errno;
 	    if (verboselog)
@@ -2558,6 +2356,7 @@ appendlet(dp, rp, fp, file, ismime)
 	const char *file;
 {
 	struct writestate WS;
+	const char *s; /* message body start */
 
 #if !(defined(HAVE_MMAP) && defined(TA_USE_MMAP))
 	register int i;
@@ -2565,8 +2364,6 @@ appendlet(dp, rp, fp, file, ismime)
 	char iobuf[BUFSIZ]; /* For setvbuf(mfp) */
 	FILE *mfp;
 	int mfd = dp->msgfd;
-#else
-	char *s;
 #endif
 
 	WS.fp     = fp;
@@ -2604,7 +2401,6 @@ appendlet(dp, rp, fp, file, ismime)
 	    return WS.lastch;
 	  }
 
-	  lseek(mfd, (off_t)dp->msgbodyoffset, SEEK_SET);
 	  mfp = fdopen(mfd,"r");
 	  setvbuf(mfp, iobuf, _IOFBF, sizeof(iobuf));
 
@@ -2949,14 +2745,14 @@ writemimeline(WS, buf, len)
 	char *buf2;
 
 #ifdef	USE_ALLOCA
-	WS->buf2 = (char*)alloca(len+1);
+	WS->buf2 = alloca(len+1);
 #else
 	if (WS->buf2 == NULL) {
-	  WS->buf2 = (char*)emalloc(len+1);
+	  WS->buf2 = emalloc(len+1);
 	  WS->buf2len = len;
 	}
 	if (WS->buf2len < len) {
-	  WS->buf2 = (char*)realloc(WS->buf2, len+1);
+	  WS->buf2 = realloc(WS->buf2, len+1);
 	  WS->buf2len = len;
 	}
 #endif
@@ -3124,16 +2920,6 @@ decodeXtext(fp,xtext)
 	}
 }
 
-static const char *dfltform[7] = {
-	"Subject: Returned mail: Return receipt",
-	"MIME-Version: 1.0",
-	"Priority: junk",
-	"Content-Type: multipart/report; report-type=delivery-status;",
-	"",
-	"Your mail message has been delivered properly to the following recipients:",
-	NULL
-};
-
 static void
 return_receipt (dp, retrecptaddr, uidstr)
 	struct ctldesc *dp;
@@ -3150,6 +2936,16 @@ return_receipt (dp, retrecptaddr, uidstr)
 	int uid;
 	struct stat stb;
 	const char *username = "unknown";
+
+	const char *dfltform[] = {
+		"Subject: Returned mail: Return receipt",
+		"MIME-Version: 1.0",
+		"Priority: junk",
+		"Content-Type: multipart/report; report-type=delivery-status;",
+		"",
+		"Your mail message has been delivered properly to the following recipients:",
+		NULL
+	};
 
 	uid = atoi(uidstr);
 	pw = getpwuid(uid);
@@ -3195,7 +2991,7 @@ return_receipt (dp, retrecptaddr, uidstr)
 	  struct stat stbuf;
 
 	  fstat(FILENO(mfp),&stbuf);
-	  sprintf(fname,"%ld",(long)stbuf.st_ino);
+	  sprintf(fname,"%d",stbuf.st_ino);
 	  taspoolid(boundarystr, sizeof(boundarystr), stbuf.st_ctime, fname);
 	  strcat(boundarystr, "=_/return-receipt/");
 	  strcat(boundarystr, dom);

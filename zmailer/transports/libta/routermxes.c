@@ -18,7 +18,7 @@
 
 
 /*
- *  char *routermxes(char *cp, struct taddress *ap);
+ *  char *routermxes(char *cp, struct address *ap);
  *
  *	Parses input string for   ((mxer)(mxer mxer)(mxer))
  *	formatted multi-homing router target info (like MX records)
@@ -35,7 +35,7 @@
 char *
 routermxes(cp,ap)
 	char *cp;
-	struct taddress *ap;
+	struct address *ap;
 {
 	/* We receive information from router about its ideas of MXes
 	   (for SMTP mainly) */

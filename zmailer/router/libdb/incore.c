@@ -81,7 +81,7 @@ search_core(sip)
 		return NULL;
 	if (spl->data == NULL)
 		return newstring(strnsave("", 1));
-	return newstring(strsave((const char *)spl->data));
+	return newstring(strsave((char *)spl->data));
 }
 
 /*
@@ -229,10 +229,9 @@ icprintNS(spl)
 	struct spblk *spl;
 {
 	if (spl->data != NULL)
-		fprintf(pcfp, "%d\t%s\n",
-			(int)spl->key, (const char *)spl->data);
+		fprintf(pcfp, "%d\t%s\n", (int)spl->key, (char *)spl->data);
 	else
-		fprintf(pcfp, "%d\n", (int) spl->key);
+		fprintf(pcfp, "%d\n", spl->key);
 	return 0;
 }
 
@@ -251,11 +250,9 @@ icprintSS(spl)
 	struct spblk *spl;
 {
 	if (spl->data != NULL)
-		fprintf(pcfp, "%s\t%s\n",
-			pname(spl->key), (const char *)spl->data);
+		fprintf(pcfp, "%s\t%s\n", pname(spl->key), (char *)spl->data);
 	else
-		fprintf(pcfp, "%s\n",
-			pname(spl->key));
+		fprintf(pcfp, "%s\n", pname(spl->key));
 	return 0;
 }
 

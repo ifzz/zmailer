@@ -6,15 +6,12 @@
  *	A plenty of changes, copyright Matti Aarnio 1990-1995
  */
 
-#ifndef _Z_TA_H_
-#define _Z_TA_H_
-
 #ifdef HAVE_CONFIG_H
 #include "hostenv.h"
 #endif
 
-struct taddress {
-	struct taddress	*link;		/* next sender / sender for this rcpt */
+struct address {
+	struct address	*link;		/* next sender / sender for this rcpt */
 	const char	*channel;
 	const char	*host;
 	const char	*user;
@@ -26,8 +23,6 @@ struct taddress {
 #define _DSN_NOTIFY_FAILURE	0x002
 #define _DSN_NOTIFY_DELAY	0x004
 #define _DSN_NOTIFY_NEVER	0x008
-
-#define _DSN__DIAGDELAYMODE	0x800 /* Internal magic */
 
 /* `convertmode' controls the behaviour of the message conversion:
      _CONVERT_NONE (0): send as is
@@ -43,7 +38,7 @@ struct taddress {
 
 struct rcpt {
 	struct rcpt	*next;
-	struct taddress	*addr;		/* addr.link is the sender address */
+	struct address	*addr;		/* addr.link is the sender address */
 	const char	*orcpt;		/*  DSN  ORCPT=  string */
 	const char	*inrcpt;	/* "DSN" INRCPT= string */
 	const char	*notify;	/*  DSN  NOTIFY= flags  */
@@ -63,13 +58,6 @@ struct rcpt {
 	int		status;		/* current delivery sysexit code */
 	struct ctldesc	*desc;		/* backpointer to descriptor */
 	/* XX: something needed for XOR address lists */
-
-#if 0 /* not yet ?? */
-	/* Delayed diagnostics */
-	char		*diagdelaybuf;
-	int		diagdelaysize;
-	int		diagdelayspace;
-#endif
 };
 
 struct ctldesc {
@@ -88,7 +76,7 @@ struct ctldesc {
 	const char	*contents;	/* message file data */
 	long		contentsize;	/* message file size */
 	long		*offset;	/* array of indices into contents */
-	struct taddress	*senders;	/* list of sender addresses */
+	struct address	*senders;	/* list of sender addresses */
 	struct rcpt	*recipients;	/* list of selected recipients */
 	int		rcpnts_total;	/* number of recipients, total */
 	int		rcpnts_remaining;/* .. how many yet to deliver */
@@ -131,7 +119,7 @@ struct mimestate {
 /* ctlopen.c: */
 extern void            ctlfree __((struct ctldesc *dp, void *anyp));
 extern void           *ctlrealloc __((struct ctldesc *dp, void *anyp, size_t size));
-extern struct ctldesc *ctlopen __((const char *file, const char *channel, const char *host, int *exitflag, int (*selectaddr)(const char *, const char *, void *), void *saparam, int (*matchrouter)(const char *, struct taddress *, void *), void *mrparam));
+extern struct ctldesc *ctlopen __((const char *file, const char *channel, const char *host, int *exitflag, int (*selectaddr)(const char *, const char *, void *), void *saparam, int (*matchrouter)(const char *, struct address *, void *), void *mrparam));
 extern void            ctlclose __((struct ctldesc *dp));
 extern int	       ctlsticky __((const char *spec_host, const char *addr_host, void *cbparam));
 
@@ -233,6 +221,9 @@ extern void warning __(());
 /* lib/skip821address.c */
 extern char *skip821address __((const char *s));
 
+/* lib/taspoolid.c */
+extern void taspoolid __((char *buf, int buflen, time_t mtime, const char *path));
+
 /* tasyslog.c */
 extern void tatimestr __((char *buf, int dt));
 extern void tasyslog __((struct rcpt *rp, int xdelay, const char *wtthost, const char *wttip, const char *stats, const char *msg));
@@ -248,5 +239,3 @@ extern int getmyuucename __((char *, int));
 extern int  fd_nonblockingmode __((int fd));
 extern int  fd_blockingmode __((int fd));
 extern void fd_restoremode __((int fd, int mode));
-
-#endif

@@ -46,14 +46,14 @@
 #include <sys/mman.h>
 #endif
 
-extern char *routermxes __((char *, struct taddress *));
+extern char *routermxes __((char *, struct address *));
 extern int errno;
 
 #ifndef strrchr
 extern char *strrchr();
 #endif
 
-static struct taddress *ctladdr __((char *cp));
+static struct address *ctladdr __((char *cp));
 
 
 #ifndef	MAXPATHLEN
@@ -98,7 +98,7 @@ void
 ctlclose(dp)
 	struct ctldesc *dp;
 {
-	struct taddress *ap, *nextap;
+	struct address *ap, *nextap;
 	struct rcpt *rp, *nextrp;
 	char ***msghpp;
 
@@ -158,13 +158,13 @@ ctlclose(dp)
 }
 
 
-static struct taddress *
+static struct address *
 ctladdr(cp)
 	char *cp;
 {
-	struct taddress *ap;
+	struct address *ap;
 
-	ap = (struct taddress *)emalloc(sizeof (struct taddress));
+	ap = (struct address *)emalloc(sizeof (struct address));
 	if (ap == NULL)
 		return NULL;
 	ap->link = NULL;
@@ -202,7 +202,7 @@ ctladdr(cp)
 struct ctldesc *
 ctlopen(const char *file, const char *channel, const char *host,
 	int *exitflagp, int (*selectaddr)(const char *, const char *, void *),
-	void *saparam,  int (*matchrouter)(const char *, struct taddress *, void *),
+	void *saparam,  int (*matchrouter)(const char *, struct address *, void *),
 	void *mrparam)
 
 #else
@@ -213,7 +213,7 @@ ctlopen(file, channel, host, exitflagp, selectaddr, saparam, matchrouter, mrpara
 	int *exitflagp;
 	int (*selectaddr)  __((const char *, const char *, void *));
 	void *saparam;
-	int (*matchrouter) __((const char *, struct taddress *, void *));
+	int (*matchrouter) __((const char *, struct address *, void *));
 	void *mrparam;
 
 #endif
@@ -221,7 +221,7 @@ ctlopen(file, channel, host, exitflagp, selectaddr, saparam, matchrouter, mrpara
 	register char *s, *contents;
 	char *mfpath;
 	int i, n;
-	struct taddress *ap;
+	struct address *ap;
 	struct rcpt *rp = NULL, *prevrp = NULL;
 	struct stat stbuf;
 	char ***msgheaders = NULL;

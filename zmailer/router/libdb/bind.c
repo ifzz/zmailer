@@ -45,7 +45,6 @@
 #ifdef __linux__
 #define __USE_BSD 1	/* Linux headers ... Auch..  <endian.h> */
 #endif
-#include <arpa/inet.h>
 #include <arpa/nameser.h>
 #include <resolv.h>
 #include <string.h>
@@ -558,6 +557,7 @@ getrrtypec(host, rrtype, ttlp, depth)
 	CUC *eom, *cp, *nextcp;
 	querybuf buf, answer;
 	int qlen, n, ancount, qdcount, ok, first;
+	struct in_addr inaddr;
 	time_t maxttl, ttl;
 	int type;
 	char nbuf[BUFSIZ];
@@ -685,7 +685,7 @@ getrrtypec(host, rrtype, ttlp, depth)
 
 			*ttlp = maxttl;
 			n = (*cp) & 0xFF;
-			if (0 < n && n < (int)sizeof(hb))
+			if (0 < n && n < sizeof hb)
 			  return newstring(strnsave((const char *)cp+1, n));
 			break;
 

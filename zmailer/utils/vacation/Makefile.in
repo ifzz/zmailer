@@ -1,7 +1,3 @@
-#
-#  Makefile(.in) for ZMailer's vacation program
-#
-
 srcdir = @srcdir@
 VPATH = @srcdir@
 @SET_MAKE@
@@ -17,12 +13,9 @@ MANDIR=		$(prefix)@MANDIR@
 INSTALL=	@INSTALL@
 TOPDIR=		../..
 LIBS=		-L$(TOPDIR)/libs -lzc @GETPWLIB@ @LIBRESOLV@ @LIBSOCKET@
-LN_S=		"@LN_S@"
-MKDIR=		@MKDIR@
 
 VMSGDEF=	@MAILSHARE@/vacation.msg
 DEFS=		@DEFS@ -DVMSGDEF='"$(VMSGDEF)"'
-VACATIONPATH=	$(prefix)@VACATIONPATH@
 
 INCL=		-I$(srcdir)/$(TOPDIR)/include -I$(TOPDIR)/include -I$(TOPDIR)
 DBMLIB=		@LIBDBMS@
@@ -30,7 +23,7 @@ CONVTIME= convtime.o
 MANEXT=1
 
 COPTS=		@CFLAGS@
-CFLAGS=		$(COPTS) $(CPPFLAGS) $(DEFS) -DZMAILER @GENINCL@ $(INCL)
+CFLAGS=		$(COPTS) $(CPPFLAGS) $(DEFS) -DZMAILER $(INCL)
 
 SOURCE=		vacation.c convtime.c
 
@@ -50,36 +43,13 @@ clean:
 distclean: clean
 	rm -f Makefile vacation.sh $(TOPDIR)/man/vacation.1
 
-install: vacation-inst
-	@if [ $(LN_S) = "ln -s" -a					\
-	     "$(VACATIONPATH)" != "$(MAILBIN)/vacation.sh" ]; then	\
-	    if [ -h "$(VACATIONPATH)" ]; then				\
-		test -f $(VACATIONPATH) &&				\
-			rm -f $(VACATIONPATH) ;				\
-		echo "ln -s $(MAILBIN)/vacation.sh $(VACATIONPATH)" ;	\
-		ln -s $(MAILBIN)/vacation.sh $(VACATIONPATH) ||		\
-			echo "Failed! rc=$?" ;				\
-	    else							\
-		test -f "$(VACATIONPATH)" &&				\
-			mv -f $(VACATIONPATH) $(VACATIONPATH).orig;	\
-		echo "ln -s $(MAILBIN)/vacation.sh $(VACATIONPATH)";	\
-		ln -s $(MAILBIN)/vacation.sh $(VACATIONPATH) ||		\
-			echo "Failed! rc=$?" ;				\
-	    fi ;							\
-	else								\
-	    echo "********************************************************" ; \
-	    echo "** $(VACATIONPATH) needs to be updated to be" ;  	      \
-	    echo "**   a symlink (if possible) to $(MAILBIN)/vacation.sh" ;  \
-	    echo "********************************************************" ; \
-	fi
-
-vacation-inst: vacation
-	@$(INSTALL) -m 755 vacation.sh $(MAILBIN)/vacation.sh
-	-@rm -f $(MAILBIN)/vacation
-	@cd $(MAILBIN) ; ln -s vacation.sh vacation
-	@$(INSTALL) -m 755 vacation $(MAILBIN)/vacation.exe
+install: vacation
+	$(INSTALL) -m 755 vacation.sh $(MAILBIN)/vacation.sh
+	-rm -f $(MAILBIN)/vacation
+	cd $(MAILBIN) ; ln -s vacation.sh vacation
+	$(INSTALL) -m 755 vacation $(MAILBIN)/vacation.exe
 	@if [ ! -f $(prefix)$(VMSGDEF) ] ; then				\
-		$(INSTALL) -m 644 $(srcdir)/vacation.msg $(prefix)$(VMSGDEF); \
+		$(INSTALL) -m 644 $(srcdir)/vacation.msg $(prefix)$(VMSGDEF) ; \
 	else								\
 		echo "** File $(prefix)$(VMSGDEF) already installed" ;	\
 	fi

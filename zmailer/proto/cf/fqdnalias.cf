@@ -42,8 +42,7 @@ provide fqdnalias
 
 fqdn_neighbour (domain, address, A) {
 	# "domain" is dummy..
-	local lcaddress l a priv nattr user athost
-	local plustail
+	local lcaddress l a priv nattr user host
 
 	# It may not be a "sender" address!
 
@@ -53,12 +52,11 @@ fqdn_neighbour (domain, address, A) {
 	esac
 
 	lcaddress="$(recase -l "$address")"
-	plustail=""
 
 	tsift "$lcaddress" in
 	(.+)@(.+)
 		user="\1"
-		athost="@\2"
+		host="\2"
 		break
 		;;
 	.*
@@ -79,41 +77,16 @@ fqdn_neighbour (domain, address, A) {
 	#       Yes, generate new privilege attribute for it. Success ?
 	#         Yes, do the expansion! (echo .. | listexpand ...)
 	#
-	if a="$(fqdnaliases "$lcaddress")" ; then
-		db add expansions "$lcaddress" fqdnaliases
-		priv=$(filepriv -M 644 $MAILVAR/db/fqdnaliases$DBEXTtest \
+	a="$(fqdnaliases "$lcaddress")" &&
+	  db add expansions "$lcaddress" fqdnaliases &&
+	    priv=$(filepriv -M 644 $MAILVAR/db/fqdnaliases \
 				$(db owner fqdnaliases)) &&
-		nattr=$(newattribute $A privilege $priv) &&
-		return $(echo "$a" |					\
-			 listaddresses	-c "$a fqdn alias expansion" 	\
-					-e root			 |	\
-			 maprrouter $nattr "fqdnalias" "$address"	\
-				"$plustail" "$athost")
-	fi
-
-	# Didn't match,
-
-	# Plusfull usernames ??
-
-	ssift "$user" in
-	([^+]+)\+(.*)
-	    local u2 pl2
-	    u2="\1"
-	    pl2="+\2"
-	    if a="$(fqdnaliases "$u2$athost")" ; then
-		db add expansions "$lcaddress" fqdnaliases
-		priv=$(filepriv -M 644 $MAILVAR/db/fqdnaliases$DBEXTtest \
-				$(db owner fqdnaliases)) &&
-		nattr=$(newattribute $A privilege $priv) &&
-		return $(echo "$a" |					\
-			 listaddresses	-c "$a fqdn+ alias expansion" 	\
-					-e root			 |	\
-			 maprrouter $nattr "fqdnalias" "$address"	\
-				"$pl2" "$athost")
-
-	    fi
-	    ;;
-	tfiss
+	      nattr=$(newattribute $A privilege $priv) &&
+		return $(echo "$a" |				  \
+			 listexpand	-e root 		  \
+					-c 'fqdn-alias expansion' \
+					-N -			  \
+					"$nattr" "$a" "$address")
 
 	# Didn't match,
 
@@ -121,25 +94,25 @@ fqdn_neighbour (domain, address, A) {
 	# We may also match for:  "@domain.name"
 
 	# Already expanded ?  If yes, go away!
-	$(expansions "$athost") && return 1
+	$(expansions "@$host") && return 1
 
 	#   Yes, add to the expansions.  Success ?
 	#     Yes, Any success with filepriv from the alias db ?
 	#       Yes, generate new privilege attribute for it. Success ?
 	#         Yes, do the expansion! (echo .. | listexpand ...)
 	#
-	if a="$(fqdnaliases "$athost")" ; then
-		db add expansions "$athost" fqdnaliases
-		priv=$(filepriv -M 644 $MAILVAR/db/fqdnaliases \
+	a="$(fqdnaliases "@$host")" &&
+	  db add expansions "@$host" fqdnaliases &&
+	    priv=$(filepriv -M 644 $MAILVAR/db/fqdnaliases \
 				$(db owner fqdnaliases)) &&
-		nattr=$(newattribute $A privilege $priv) &&
+	      nattr=$(newattribute $A privilege $priv) &&
 		return $(echo "$a" |				   \
-			 listaddresses	-c "$a fqdn alias expansion" 	\
-					-e root			 |	\
-			 maprrouter $nattr "fqdnalias" "$address"	\
-				"$plustail" "$athost")
-	fi
+			 listexpand	-e root 		   \
+					-c 'fqdn-@alias expansion' \
+					-N -			   \
+					"$nattr" "$a" "$address")
 
+	# Didn't match,
 
 # TODO: *@any.domain  which maps  somebody@any.domain via
 #	replacement pattern(s): %s@other.domain or other.uucp!%s, or ..
@@ -152,69 +125,41 @@ fqdn_neighbour (domain, address, A) {
 
 	# Do we have a file with that name ?
 	a="$MAILVAR/fqlists/$lcaddress"
-	l="$preowner$user$postowner$athost"
+	l="$preowner$user$postowner@$host"
 	nattr=()
-	if [ -f "$a" ]; then
-		db add expansions "$lcaddress" fqlist
-		priv=$(getpriv "644" $priv "$a" maillist)
-		nattr=$(newattribute $A privilege $priv sender "$l")
+	[ -f "$a" ] &&
+	  db add expansions "$lcaddress" fqlist &&
+	    priv=$(getpriv "644" $priv "$a" maillist) &&
+	      nattr=$(newattribute $A privilege $priv sender "$l") &&
 		return $(listexpand	-E "$l" -e "$l" -p $priv	\
 					-c "$a file expansion"		\
-					"$nattr" "$a" "$user$athost"    \
-					"$plustail" "$athost" < "$a")
-	fi
-
+					"$nattr" "$a" "$user@$host" < "$a")
 	# Ok, if the list (MAILVAR/fqlists/user@host) did exist, we did
 	# process it's expansion above.  See if we are looking for *-owner,
 	# owner-*, or *-request of same lists.
 
 	ssift "$user" in
 	(.+)-owner
-		a="$MAILVAR/fqlists/\1$athost"
+		a="$MAILVAR/fqlists/\1@$host"
 		[ -f "$a" ] &&
 		  return $(rrouter "$(uid2login $(filepriv -M 664 "$a"))" \
-				   "$address" $A "" "" "$domain")
+				   "$address" $A "")
 		break
 		;;
 	(.+)-request
-		a="$MAILVAR/fqlists/\1$athost"
+		a="$MAILVAR/fqlists/\1@$host"
 		[ -f "$a" ] &&
 		  return $(rrouter "$(uid2login $(filepriv -M 664 "$a"))" \
-				   "$address" $A "" "" "$domain")
+				   "$address" $A "")
 		break
 		;;
 	owner-(.+)
-		a="$MAILVAR/fqlists/\1$athost"
+		a="$MAILVAR/fqlists/\1@$host"
 		[ -f "$a" ] &&
 		  return $(rrouter "$(uid2login $(filepriv -M 664 "$a"))" \
-				   "$address" $A "" "" "$domain")
+				   "$address" $A "")
 		;;
 	tfiss
 
 	return 1
-}
-
-
-mapfqrrouter (attribute, localpart, origaddr, plustail, domain) {
-	local shh al
-
-	al=()
-	while read address
-	do
-		case "$address" in
-		'')	shh=(((error expansion "$localpart")))
-			lappend al $shh
-			continue
-			;;
-		esac
-
-		defer=''
-		shh=$(rrouter "$address" "$origaddr" $attribute \
-			"$plustail" "$domain")
-		[ "$defer" ] &&
-		    shh=(((hold "$defer" "$address" $attribute)))
-		defer=''
-		lappend al $shh
-	done
-	return $al
 }

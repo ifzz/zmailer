@@ -15,16 +15,12 @@ TOPDIR=		../..
 MAILBIN=	$(prefix)@MAILBIN@
 DEFS=		@DEFS@
 INSTALL=	@INSTALL@
-MAILBOX_INCL=	@GENINCL@
-MAILBOX_LIB=	@LIBMAIL@ @LIBRESOLV@ @LIBSOCKET@ @GETPWLIB@ 
-
-# Compile & install time: 'make privatembox="private/"'
-privatembox=	@PRIVATEMBOX@
-
+MAILBOX_INCL=	
+MAILBOX_LIB=	@LIBMAIL@ @GETPWLIB@ @LIBRESOLV@ @LIBSOCKET@
 #
 SOURCE=		mailbox.c
-INCL=		-I$(srcdir)/$(TOPDIR)/include -I$(TOPDIR)/include -I$(TOPDIR)
-CFLAGS=		$(COPTS) $(CPPFLAGS) $(DEFS) $(MAILBOX_INCL) $(INCL)
+INCL=		-I$(srcdir)/$(TOPDIR)/include -I$(TOPDIR)/include -I$(TOPDIR) $(MAILBOX_INCL)
+CFLAGS=		$(COPTS) $(CPPFLAGS) $(DEFS) $(INCL)
 LIBMALLOC=	@LIBMALLOC@
 LIBMALLOCDEB=	$(TOPDIR)/libs/libmalloc_d.a
 LIB=		-L$(TOPDIR)/libs -lta -lz -lzc $(LIBMALLOC)
@@ -39,25 +35,20 @@ LINTLIB=	../libta/llib-llibta.ln
 #	see ../../support/{nfslock,rlockd} for more about this
 MAILBOXDEFS=	-DBIFF -DRBIFF -DRBIFF_ALWAYS # -DUSE_NFSMBOX
 
-HDRS=		$(srcdir)/$(TOPDIR)/include/sieve.h
-
 all:	$(PROGRAM)-a mboxpath-a # in.rlockd
 
 $(PROGRAM)-a:	$(LIBDEB) $(PROGRAM)
 mboxpath-a:	$(LIBDEB) mboxpath
 
-$(PROGRAM):	$(PROGRAM).o version.o lock.o sieve.o $(LIBDEB)
-	$(CC) $(CFLAGS) -o $@ $(PROGRAM).o version.o lock.o sieve.o $(LIB) $(MAILBOX_LIB)
+$(PROGRAM):	$(PROGRAM).o version.o lock.o $(LIBDEB)
+	$(CC) $(CFLAGS) -o $@ $(PROGRAM).o version.o lock.o $(LIB) $(MAILBOX_LIB)
 
 
 mboxpath:	mboxpath.o version.o $(LIBDEB)
 	$(CC) $(CFLAGS) -o $@ mboxpath.o version.o $(LIB) $(MAILBOX_LIB)
 
-$(PROGRAM).o: $(srcdir)/$(PROGRAM).c $(HDRS)
+$(PROGRAM).o: $(srcdir)/$(PROGRAM).c
 	$(CC) $(CFLAGS) $(MAILBOXDEFS) -c $(srcdir)/$(PROGRAM).c
-
-sieve.o:	$(srcdir)/$(privatembox)sieve.c $(HDRS)
-	$(CC) $(CFLAGS) $(MAILBOXDEFS) -c $(srcdir)/$(privatembox)sieve.c
 
 mboxpath.o:	$(srcdir)/mboxpath.c
 	$(CC) $(CFLAGS) $(MAILBOXDEFS) -c $(srcdir)/mboxpath.c
@@ -68,14 +59,12 @@ version.c:	$(PROGRAM).o $(TOPDIR)/Makefile
 lock.o: $(srcdir)/lock.c
 	$(CC) $(CFLAGS) $(MAILBOXDEFS) -c $(srcdir)/lock.c
 
-install:	$(PROGRAM) mboxpath
+install:	$(PROGRAM)
 	$(INSTALL) -m 0755 $(PROGRAM) $(MAILBIN)/ta/$(PROGRAM).x
 	mv $(MAILBIN)/ta/$(PROGRAM).x $(MAILBIN)/ta/$(PROGRAM)
-	$(INSTALL) -m 0755 mboxpath $(MAILBIN)/mboxpath.x
-	mv $(MAILBIN)/mboxpath.x $(MAILBIN)/mboxpath
 
 clean:
-	-rm -f $(PROGRAM) in.rlockd *.o *.out make.log *~ mboxpath
+	-rm -f $(PROGRAM) in.rlockd *.o *.out make.log *~
 distclean: clean
 	-rm -f Makefile
 

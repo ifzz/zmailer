@@ -22,6 +22,7 @@
 #include "zsyslog.h"
 
 #include "prototypes.h"
+#include "libz.h"
 #include "libsh.h"
 
 #ifndef _IOFBF
@@ -514,9 +515,9 @@ squirrel(e, keyw, text)
 	char *path;
 
 #ifndef	USE_ALLOCA
-	path = (char*)emalloc(5+sizeof(POSTMANDIR)+10+strlen(keyw));
+	path = emalloc(5+sizeof(POSTMANDIR)+10+strlen(keyw));
 #else
-	path = (char*)alloca(5+sizeof(POSTMANDIR)+10+strlen(keyw));
+	path = alloca(5+sizeof(POSTMANDIR)+10+strlen(keyw));
 #endif
 	sprintf(path, "../%s/%d.%s",
 		POSTMANDIR, (int)e->e_statbuf.st_ino, keyw);
@@ -647,9 +648,9 @@ reject(e, msgfile)
 	 * is pointing at, into recipient addresses.
 	 */
 #ifndef	USE_ALLOCA
-	path = (char*)emalloc(3+strlen(mailshare)+strlen(FORMSDIR)+strlen(msgfile));
+	path = emalloc(3+strlen(mailshare)+strlen(FORMSDIR)+strlen(msgfile));
 #else
-	path = (char*)alloca(3+strlen(mailshare)+strlen(FORMSDIR)+strlen(msgfile));
+	path = alloca(3+strlen(mailshare)+strlen(FORMSDIR)+strlen(msgfile));
 #endif
 	sprintf(path, "%s/%s/%s", mailshare, FORMSDIR, msgfile);
 	fp = fopen(path, "r");
@@ -760,16 +761,16 @@ defer(e, why)
 	}
 	if (stbuf.st_ino > 0) {
 #ifdef	USE_ALLOCA
-	  path = (char*)alloca(5+sizeof(DEFERREDDIR)+6+strlen(why));
+	  path = alloca(5+sizeof(DEFERREDDIR)+6+strlen(why));
 #else
-	  path = (char*)emalloc(5+sizeof(DEFERREDDIR)+6+strlen(why));
+	  path = emalloc(5+sizeof(DEFERREDDIR)+6+strlen(why));
 #endif
 	  sprintf(path,"../%s/%d.%s", DEFERREDDIR, (int)stbuf.st_ino, why);
 	} else {
 #ifdef	USE_ALLOCA
-	  path = (char*)alloca(5+sizeof(DEFERREDDIR)+strlen(e->e_file)+2+strlen(why));
+	  path = alloca(5+sizeof(DEFERREDDIR)+strlen(e->e_file)+2+strlen(why));
 #else
-	  path = (char*)emalloc(5+sizeof(DEFERREDDIR)+strlen(e->e_file)+2+strlen(why));
+	  path = emalloc(5+sizeof(DEFERREDDIR)+strlen(e->e_file)+2+strlen(why));
 #endif
 	  sprintf(path, "../%s/%s.%s", DEFERREDDIR, e->e_file, why);
 	}
@@ -1154,41 +1155,23 @@ sequencer(e, file)
 	    smtprelay = sr;
 	  }
 	} else {
+	  /* Ok, we don't trust it!  In fact we might overrule the data
+	     that the message writer coded in... */
 	  const char *s, *ps;
 	  char *ts;
 	  int totlen;
 
-	  if (h != NULL) {
-
-	    /* Ok, we don't trust it!  In fact we might overrule the data
-	       that the message writer coded in... */
-
-	    dprintf("Message has 'rcvdfrom' envelope header, but we don't trust it!\n");
-	    s = uidpwnam(e->e_statbuf.st_uid);
-	    ps = "";
-	    totlen = 10 + strlen(s) + 60;
-	    if (h) {
-	      ps = h->h_lines->t_pname;
-	      totlen += strlen(ps) + 10;
-	    }
-	    /* ts = strnsave("", totlen); */
-	    ts = tmalloc(totlen); /* Alloc the space */
-	    if (h) {
-	      sprintf(ts, "rcvdfrom localhost (user: '%s' uid#%ld fake: %s)",
-		      s, (long) e->e_statbuf.st_uid, h->h_lines->t_pname);
-	    } else
-	      sprintf(ts, "rcvdfrom localhost (user: '%s' uid#%ld)",
-		      s, (long) e->e_statbuf.st_uid);
-
-	  } else {
-
-	    /* No "rcvdfrom" envelope header */
-	    s = uidpwnam(e->e_statbuf.st_uid);
-	    totlen = 60 + strlen(s);
-	    ts = tmalloc(totlen);
-	    sprintf(ts, "rcvdfrom localhost (user: '%s', uid#%ld)",
-		    s, (long) e->e_statbuf.st_uid);
-	  }
+	  dprintf("Message has 'rcvdfrom' envelope header, but we don't trust it!\n");
+	  s = uidpwnam(e->e_statbuf.st_uid);
+	  ps = "";
+	  if (h) ps = h->h_lines->t_pname;
+	  totlen = 10 + strlen(s) + 20 + (h ? strlen(ps) + 10 : 0);
+	  /* ts = strnsave("", totlen); */
+	  ts = tmalloc(totlen); /* Alloc the space */
+	  if (h) {
+	    sprintf(ts, "rcvdfrom %s@localhost (fake: %s)", s, h->h_lines->t_pname);
+	  } else
+	    sprintf(ts, "rcvdfrom %s@localhost", s);
 
 	  h = makeHeader(spt_eheaders, ts, 8);
 	  h->h_next = e->e_eHeaders;
@@ -1551,25 +1534,24 @@ sequencer(e, file)
 	}
 
 	dprintf("Nuke Bcc/Return-Path/X-Orcpt/X-Envid headers, if any\n");
-	hp = & e->e_headers;
-	while (*hp != NULL) {
-	  h = *hp;
-	  if (h->h_descriptor->hdr_name != NULL &&
-	      ((h->h_descriptor->class == normal &&
-		(CISTREQ(h->h_descriptor->hdr_name,"bcc") ||
-		 CISTREQ(h->h_descriptor->hdr_name,"return-path") ||
-		 CISTREQ(h->h_descriptor->hdr_name,"x-orcpt")     ||
-		 CISTREQ(h->h_descriptor->hdr_name,"x-envid")        ))
-	       || (h->h_descriptor->class == Resent &&
-		   (CISTREQ(h->h_descriptor->hdr_name,"resent-BCC")         ||
-		    CISTREQ(h->h_descriptor->hdr_name,"resent-return-path") ||
-		    CISTREQ(h->h_descriptor->hdr_name,"resent-x-orcpt")     ||
-		    CISTREQ(h->h_descriptor->hdr_name,"resent-x-envid")  )))) {
-	    /* Skip this one */
-	    *hp = h->h_next;
-	  } else {
-	    /* No header dropping here */
-	    hp = & h->h_next;
+	oh = NULL;
+	for (h = e->e_headers; h != NULL; oh = h, h = h->h_next) {
+	  if (h->h_descriptor->hdr_name == NULL)
+	    continue;
+	  if ((h->h_descriptor->class == normal &&
+	       (CISTREQ(h->h_descriptor->hdr_name,"bcc") ||
+		CISTREQ(h->h_descriptor->hdr_name,"return-path") ||
+		CISTREQ(h->h_descriptor->hdr_name,"x-orcpt")     ||
+		CISTREQ(h->h_descriptor->hdr_name,"x-envid")        ))
+	      || (h->h_descriptor->class == Resent &&
+		  (CISTREQ(h->h_descriptor->hdr_name,"resent-BCC")         ||
+		   CISTREQ(h->h_descriptor->hdr_name,"resent-return-path") ||
+		   CISTREQ(h->h_descriptor->hdr_name,"resent-x-orcpt")     ||
+		   CISTREQ(h->h_descriptor->hdr_name,"resent-x-envid")    ))) {
+	    if (oh == NULL)
+	      e->e_headers = h->h_next;
+	    else
+	      oh->h_next = h->h_next;
 	  }
 	}
 
@@ -1588,7 +1570,7 @@ sequencer(e, file)
 		}
 		dprintf("Emit warning headers\n");
 		for (ph = NULL, h = e->e_headers; h != NULL; ph=h,h=h->h_next) {
-			if (h->h_stamp == BadHeader && do_hdr_warning) {
+			if (h->h_stamp == BadHeader) {
 				if (ph == NULL)
 					e->e_headers = hdr_warning(h);
 				else
@@ -1899,7 +1881,7 @@ sequencer(e, file)
 	ofpname = (char *)emalloc((u_int)(strlen(file)+9));
 #endif
 	/* Guaranteed unique within this machine */
-	sprintf(ofpname,".%s.%d", file, (int)getpid());
+	sprintf(ofpname,".%s.%d",file,getpid());
 	if ((ofp = fopen(ofpname, "w+")) == NULL) {
 #ifndef USE_ALLOCA
 		free(ofpname);
@@ -2185,9 +2167,9 @@ sequencer(e, file)
 	}
 	/* all is nirvana -- link the input file to somewhere safe */
 #ifdef	USE_ALLOCA
-	qpath = (char*)alloca(5+strlen(QUEUEDIR)+strlen(file));
+	qpath = alloca(5+strlen(QUEUEDIR)+strlen(file));
 #else
-	qpath = (char*)emalloc(5+strlen(QUEUEDIR)+strlen(file));
+	qpath = emalloc(5+strlen(QUEUEDIR)+strlen(file));
 #endif
 	sprintf(qpath, "../%s/%s", QUEUEDIR, file);
 	fflush(ofp);
@@ -2207,11 +2189,11 @@ sequencer(e, file)
 	}
 
 #ifndef USE_ALLOCA
-	path = (char*)emalloc(5+strlen(TRANSPORTDIR)+strlen(file));
+	path = emalloc(5+strlen(TRANSPORTDIR)+strlen(file));
 #else
 	/* This actually reallocs more space from stack, but then it
 	   is just stack space and will disappear.. */
-	path = (char*)alloca(5+strlen(TRANSPORTDIR)+strlen(file));
+	path = alloca(5+strlen(TRANSPORTDIR)+strlen(file));
 #endif
 	sprintf(path, "../%s/%s", TRANSPORTDIR, file);
 	unlink(path);	/* Should actually always fail.. */
@@ -2314,7 +2296,7 @@ prctladdr(info, fp, cfflag, comment)
 	    }
 	    if (cdr(l))
 	      putc(' ', fp);
-	  } else if (strcmp(channel,"error")!=0)
+	  } else
 	    fprintf(stderr, "Malformed %s\n", comment);
 	}
 	if ((cfflag == _CF_SENDER) && channel && strcmp(channel,"error") == 0)

@@ -1,8 +1,3 @@
-	THIS IS INCREASINLY OUT OF DATE, ONE OF THESE DAYS THIS
-	MUST BE REPLACED WITH THE TEXT FROM  doc/manual/zmanual.ps,
-	ESPECIALLY THE CHAPTER 2 -- INSTALL.
-
-
 Installation procedure:
 
 0.	Consider joining ZMailer user-community email list.
@@ -126,22 +121,6 @@ Installation procedure:
 	in file  doc/guides/configure
 
 
-	DO NOTE:  In the  contrib/ directory there is ``whoson-*.tar.gz''
-	server package which may be of interest to you in case you need
-	to allow easy (to users) access for relaying to your users from
-	where-ever they are traveling.  When that daemon is installed,
-	and the pop/imap servers are patched to use it, a successfull
-	message-store retrieve operation (login to do it) can open otherwise
-	restricted relaying to user's IP address for a configurable time.
-
-	When that package is installed into the system into one of several
-	possible default locations, the ./configure of ZMailer will
-	detect it, and add hooks for it into smtpserver's facilities.
-	There exists also  --with-whoson=  option to tell the script
-	about unusual locations..  (Like "/l" which means directories:
-	"/l/include/", and "/l/lib/" for the header, and the client
-	library respectively.)
-
 4.	At the toplevel, run
 
 		make
@@ -224,7 +203,7 @@ Installation procedure:
 		# make install-cf
 
 	which will install just the various cf files (MAILSHARE/cf/*.cf,
-	and MAILSHARE/*.conf) BUT WILL NOT OVERWRITE EXISTING ONES!
+	and MAILSHARE/*.conf)
 
 
 	If this is not a from-scratch installation, be aware that the
@@ -492,26 +471,8 @@ Installation procedure:
 	proper values in it PLUS use of policy-builder.sh script.
 	For more details see file:  doc/guides/smtp-policy
 
-	TO BLOCK RELAY-HIJACKS, YOU MUST CONFIGURE AND RUN THE UTILITY
-		policy-builder.sh
 
-	Perhaps you need only to run that script, but running it is
-	mandatory for things to work!
-
-	The default  $MAILSHARE/smtpserver.conf  file REQUIRES use of
-	the policy code, but you can disable that (and thus have wide-
-	open doors for abuse -- but perhaps ok for intranet) stuff by
-	commenting out line:  "PARAM policydb ..." in the file.
-
-13.	At the start the scheduler reads  $MAILSHARE/scheduler.conf  file
-	for the instructions about how to handle router produced files with
-	recipient addresses.   Propably the default boiler-plate file is
-	sufficient for you, but have a look at it anyway.
-	You will need to tinker with it for example when you want to
-	use 'Cyrus' server for local message store.
-	(See doc/guides/ files)
-
-14.	Add something like the following lines to bootup scripts (/etc/rc.local
+13.	Add something like the following lines to bootup scripts (/etc/rc.local
 	or /etc/rc2.d/S99local or similar):
 
 	if [ -r /etc/zmailer.conf ]; then
@@ -529,27 +490,27 @@ Installation procedure:
 	You may want to comment out startup of the Sendmail daemon.
 
 
-15.	Edit several of the canned error messages and programs (scripts)
+14.	Edit several of the canned error messages and programs (scripts)
 	to reflect your local configuration:
 		- $MAILSHARE/forms/ -files
 		- $MAILBIN/ta/usenet  (injected message..)
 
 
-16.	Read the notes on alias expansion in the file doc/guides/aliases and
+15.	Read the notes on alias expansion in the file doc/guides/aliases and
 	on mailing list maintenance in doc/guides/lists.
 
 
-17.	Start ZMailer:
+16.	Start ZMailer:
 
 		$MAILBIN/zmailer
 
 
-18.	Keep an eye on the log files ($LOGDIR/{router,scheduler}),
+17.	Keep an eye on the log files ($LOGDIR/{router,scheduler}),
 	the $POSTOFFICE/postman directory for malformed message files,
 	and $POSTOFFICE/deferred in case of resource problems.
 
 
-19.	Add the following entry (or equivalent) to your crontab:
+18.	Add the following entry (or equivalent) to your crontab:
 
 		28 0,8,16 * * * . /etc/zmailer.conf ; $MAILBIN/zmailer resubmit
 
@@ -565,7 +526,7 @@ Installation procedure:
 	You may want to hardwire the location of the zmailer script.
 
 
-20.	Once satisfied that things appear to work, you may want to trim down
+19.	Once satisfied that things appear to work, you may want to trim down
 	logging: there are 4 kinds of logging to deal with:
 
 	- router logs, usually kept in $LOGDIR/router.  This is the stdout

@@ -11,20 +11,9 @@
 #PARAM ListenQueueSize		  10	# listen(2) parameter
 #
 # Enables of some commands:
-#PARAM	debugcmd
+PARAM	debugcmd
 PARAM	expncmd
 PARAM	vrfycmd
-#
-# HDR220 metatags:
-#  %% -- '%' character
-#  %H -- SS->myhostname
-#  %I -- '+IDENT' if 'identflg' is set
-#  %V -- VersionNumb
-#  %T -- curtime string
-#  %X -- xlatelang parameter
-#
-#PARAM hdr220 %H ZMailer ESMTP-server %V running at Yoyodyne Propulsion Inc
-#PARAM hdr220 %H (NO UCE)(NO UBE) our local time is now %T
 #
 PARAM help -------------------------------------------------------------
 PARAM help  This mail-server is at Yoyodyne Propulsion Inc.

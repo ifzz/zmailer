@@ -22,9 +22,6 @@
 
 #include "smtpserver.h"
 
-extern int netconnected_flg;
-
-
 static const char *orcpt_string __((const char *));
 
 static const char *orcpt_string(str)
@@ -56,7 +53,7 @@ const char *str;
   putc('"', mfp);
   for ( ; *str ; ++str ) {
     int c = (*str) & 0xFF;
-    if (c == '"' || c == '\\' || c == '(' || c == ')')
+    if (c == '"' || c == '\\')
       putc('\\', mfp);
     putc(c, mfp);
   }
@@ -75,8 +72,7 @@ const char *s;
     const char *p = rfc821_domain(s, STYLE(SS->cfinfo, 'R'));
     if (p == s)
 	return 1;
-    if (!strict_protocol)
-      while (*p == ' ' || *p == '\n')
+    while (*p == ' ' || *p == '\n')
 	++p;
     if (*p == 0)
 	return 0;
@@ -158,10 +154,8 @@ const char *buf, *cp;
     strncpy(SS->helobuf, buf, sizeof(SS->helobuf));
     SS->helobuf[sizeof(SS->helobuf)-1] = 0;
 
-    if (strict_protocol && *cp == ' ')
-      ++cp;
-    else
-      while (*cp == ' ' || *cp == '\t') ++cp;
+    while (*cp == ' ' || *cp == '\t')
+	++cp;
 
     SS->policyresult = policytest(policydb, &SS->policystate,
 				  POLICY_HELONAME, cp, strlen(cp));
@@ -331,6 +325,16 @@ int insecure;
        and each recipient will use the claimed
        size, thus marking up its reception..        */
 
+    if (SS->mfp == NULL
+	&& (SS->mfp = mail_open(MSG_RFC822)) == NULL) {
+	type(SS, 452, m430, "mail_open() failed with errno %d: %s", errno, strerror(errno));
+	return;
+    }
+    availspace = fd_statfs(FILENO(SS->mfp));
+    if (availspace < 0)
+	availspace = 2000000000;	/* Over 2G ? */
+    availspace >>= 1;
+
     if (SS->carp->cmd == Mail2 || SS->carp->cmd == Send2) {
 	SS->with_protocol = WITH_ESMTP;
     }
@@ -349,44 +353,40 @@ int insecure;
 	type(SS, 503, m551, cp);
 	return;
     }
-    if (*cp == ' ') ++cp;
-    if (!strict_protocol) while (*cp == ' ' || *cp == '\t') ++cp;
     if (!CISTREQN(cp, "From:", 5)) {
 	type(SS, 501, m552, "where is From: in that?");
 	return;
     }
-    cp += 5;
-    if (!strict_protocol)
-      for (; *cp != '\0' && *cp != '<'; ++cp)
+    for (cp = cp + 5; *cp != '\0' && *cp != '<'; ++cp)
 	/* Skip white-space */
 	if (!isascii(*cp) || !isspace(*cp)) {
 	  if (!sloppy) {
-	    type(SS, 501, m517, "where is <...> in that?");
+	    type(SS, 501, m552, "where is <...> in that?");
 	    return;
 	  }
 	  break; /* Sigh, be sloppy.. */
 	}
     if (*cp == '\0') {
-	type(SS, 501, m517, "where is <...> in that?");
+	type(SS, 501, m552, "where is <...> in that?");
 	return;
     } else if (*cp != '<' && !sloppy) {
-	type(SS, 501, m517, "strangeness between : and <");
+	type(SS, 501, m552, "strangeness between : and <");
 	return;
     }
     if (*(cp + 1) == '<') {
-	type(SS, 501, m517, "there are too many <'s in that!");
+	type(SS, 501, m552, "there are too many <'s in that!");
 	return;
     }
     /* "<" [ <a-t-l> ":" ] <localpart> "@" <domain> ">" */
     if (*cp == '<') {
-      s = rfc821_path(cp, strict || strict_protocol);
+      s = rfc821_path(cp, strict);
       if (s == cp) {
 	/* Failure.. */
-	type821err(SS, 501, m517, buf, "Path data: %.200s", rfc821_error);
+	type821err(SS, 501, m552, buf, "Path data: %.200s", rfc821_error);
 	return;
       }
       if (*s == '>') {
-	type(SS, 501, m517, "there are too many >'s in that!");
+	type(SS, 501, m552, "there are too many >'s in that!");
 	return;
       }
       /* Ok, now it is a moment to see, if we have source routes: @a,@b:c@d */
@@ -406,12 +406,12 @@ int insecure;
       s = rfc821_path2(cp, strict);
       if (s == cp) {
 	/* Failure.. */
-	type821err(SS, 501, m517, buf, "Path data: %.200s", rfc821_error);
+	type821err(SS, 501, m552, buf, "Path data: %.200s", rfc821_error);
 	return;
       }
 
       if (*s == '>') {
-	type(SS, 501, m517, "there are too many >'s in that!");
+	type(SS, 501, m552, "there are too many >'s in that!");
 	return;
       }
 
@@ -434,11 +434,8 @@ int insecure;
     drpt_ret = NULL;
     rc = 0;
     while (*s) {
-	while (*s == ' ' || (sloppy && *s == '\t')) {
+	while (*s && (*s == ' ' || *s == '\t'))
 	    ++s;
-	    if (strict_protocol) break;
-	    if (strict && !sloppy) break;
-	}
 	if (CISTREQN("RET=", s, 4)) {
 	    if (drpt_ret) {
 		type(SS, 501, m554, "RET-param double defined!");
@@ -449,7 +446,7 @@ int insecure;
 	    if (CISTREQN("FULL", s, 4) ||
 		CISTREQN("HDRS", s, 4))
 		s += 4;
-	    if (*s && *s != ' ' && *s == '\t') {
+	    if (*s && *s != ' ' && *s != '\t') {
 		type(SS, 501, m454, "RET-param data error");
 		return;
 	    }
@@ -475,7 +472,7 @@ int insecure;
 		s += 4;
 	    }
 	    if (*s && *s != ' ' && *s != '\t') {
-		type(SS, 501, m554, "BODY-param data error, must be one of: 8BITMIME/BINARYMIME/7BIT");
+		type(SS, 455, m554, "BODY-param data error, must be one of: 8BITMIME/BINARYMIME/7BIT");
 		rc = 1;
 		break;
 	    }
@@ -484,7 +481,7 @@ int insecure;
 	if (CISTREQN("SIZE=", s, 5)) {
 	    s += 5;
 	    if (SS->sizeoptval != -1) {
-		type(SS, 501, m554, "SIZE-param double definition!");
+		type(SS, 455, m554, "SIZE-param double definition!");
 		rc = 1;
 		break;
 	    }
@@ -494,11 +491,8 @@ int insecure;
 		SS->sizeoptval *= 10;
 		SS->sizeoptval += (*s - '0');
 		++s;
-		if (SS->sizeoptval > 999999999) /* 1GB or more? */
-		  break;
 	    }
-	    if ((*s && *s != ' ' && *s != '\t') ||
-		(SS->sizeoptval > 999999999) /* 1GB */ ) {
+	    if (*s && *s != ' ' && *s != '\t') {
 		type(SS, 501, m554, "SIZE-param data error");
 		rc = 1;
 		break;
@@ -529,7 +523,7 @@ int insecure;
 	    }
 	    continue;
 	}
-	type(SS, 501, m554, "Unknown MAIL FROM:<> parameter: %s", s);
+	type(SS, 555, m454, "Unknown MAIL FROM:<> parameter: %s", s);
 	rc = 1;
 	break;
     }
@@ -543,29 +537,29 @@ int insecure;
     SS->policyresult = policytest(policydb, &SS->policystate,
 				  POLICY_MAILFROM, cp, addrlen);
     if (logfp) {
-      char *ss = policymsg(policydb, &SS->policystate);
-      if (SS->policyresult != 0 || ss != NULL) {
+      char *s = policymsg(policydb, &SS->policystate);
+      if (SS->policyresult != 0 || s != NULL) {
 	fprintf(logfp, "%d#\t-- policy result=%d, msg: %s\n", pid,
-		SS->policyresult, (ss ? ss : "<NONE!>"));
+		SS->policyresult, (s ? s : "<NONE!>"));
 	fflush(logfp);
       }
     }
 
     if (SS->policyresult < 0) {
-      char *ss = policymsg(policydb, &SS->policystate);
-      if (ss != NULL) {
+      char *s = policymsg(policydb, &SS->policystate);
+      if (s != NULL) {
 	type(SS,-453, m471, "Policy analysis reported:");
-	type(SS, 453, m471, "%s", ss);
+	type(SS, 453, m471, "%s", s);
       } else if (SS->policyresult < -99) {
 	if (SS->policyresult < -103) { /* -104 */
-	  type(SS, -453, m443, "Policy analysis reports temporary DNS error");
-	  type(SS, -453, m443, "with your source domain.  Retrying may help,");
-	  type(SS, -453, m443, "or if the condition persists, you may need");
-	  type(SS,  453, m443, "to get somebody to fix your DNS servers.");
+	  type(SS, -453, m471, "Policy analysis reports temporary DNS error");
+	  type(SS, -453, m471, "with your source domain.  Retrying may help,");
+	  type(SS, -453, m471, "or if the condition persists, you may need");
+	  type(SS,  453, m471, "to get somebody to fix your DNS servers.");
 	} else if (SS->policyresult < -100) {
-	  type(SS, -453, m443, "Policy analysis reports DNS error with your");
-	  type(SS, -453, m443, "source domain.   Please correct your source");
-	  type(SS,  453, m443, "address and/or the info at the DNS.");
+	  type(SS, -453, m471, "Policy analysis reports DNS error with your");
+	  type(SS, -453, m471, "source domain.   Please correct your source");
+	  type(SS,  453, m471, "address and/or the info at the DNS.");
 	} else {
 	  type(SS, -453, m471, "Access denied by the policy analysis functions.");
 	  type(SS, -453, m471, "This may be due to your source IP address,");
@@ -574,14 +568,14 @@ int insecure;
 	  type(SS,  453, m471, "gave at the MAIL FROM:<...> address.");
 	}
       } else {
-	char *ss = policymsg(policydb, &SS->policystate);
-	if (ss != NULL) {
+	char *s = policymsg(policydb, &SS->policystate);
+	if (s != NULL) {
 	  type(SS,-553, m571, "Policy analysis reported:");
-	  type(SS, 553, m571, "%s", ss);
+	  type(SS, 553, m571, "%s", s);
 	} else if (SS->policyresult < -1) {
-	  type(SS, -553, m543, "Policy analysis reports DNS error with your");
-	  type(SS, -553, m543, "source domain.   Please correct your source");
-	  type(SS,  553, m543, "address and/or the info at the DNS.");
+	  type(SS, -553, m571, "Policy analysis reports DNS error with your");
+	  type(SS, -553, m571, "source domain.   Please correct your source");
+	  type(SS,  553, m571, "address and/or the info at the DNS.");
 	} else {
 	  type(SS, -553, m571, "Access denied by the policy analysis functions.");
 	  type(SS, -553, m571, "This may be due to your source IP address,");
@@ -623,36 +617,18 @@ int insecure;
 	    free((void *) newcp);
 	return;
     }
-    fflush(SS->mfp);
     rewind(SS->mfp);
-#ifdef HAVE_FTRUNCATE
-    ftruncate(FILENO(SS->mfp), 0);
-#endif
     if (insecure)
 	fprintf(SS->mfp, "external\n");
-
-    if (netconnected_flg) {
-
-      /* Produce the 'rcvdfrom' header only when connected
-	 to network socket */
-
-      fprintf(SS->mfp, "rcvdfrom %s (", SS->rhostname);
-      if (SS->ihostaddr[0] != 0)
-	fprintf(SS->mfp, "%s:%d ", SS->ihostaddr, SS->rport);
-      rfc822commentprint(SS->mfp, SS->helobuf);
-      if (ident_flag) {
-	fprintf(SS->mfp, " ident: ");
-	rfc822commentprint(SS->mfp, SS->ident_username);
-      }
-#ifdef HAVE_WHOSON_H
-      fprintf(SS->mfp, " whoson: ");
-      rfc822commentprint(SS->mfp,
-			 ((SS->whoson_result == 0) ? SS->whoson_data :
-			  ((SS->whoson_result == 1) ? "-unregistered-" : 
-			   "-unavailable-")));
-#endif
-      fprintf(SS->mfp, ")\n");
+    fprintf(SS->mfp, "rcvdfrom %s (", SS->rhostname);
+    if (SS->ihostaddr[0] != 0)
+      fprintf(SS->mfp, "%s:%d ", SS->ihostaddr, SS->rport);
+    rfc822commentprint(SS->mfp, SS->helobuf);
+    if (ident_flag) {
+      fprintf(SS->mfp, " ident: ");
+      rfc822commentprint(SS->mfp, SS->ident_username);
     }
+    fprintf(SS->mfp, ")\n");
 
     if (bodytype != NULL)
 	fprintf(SS->mfp, "bodytype %s\n", bodytype);
@@ -683,34 +659,17 @@ int insecure;
 	fwrite(drpt_ret, 1, drptret_len, SS->mfp);
 	fputs("\n", SS->mfp);
     }
-
-    availspace = fd_statfs(FILENO(SS->mfp));
-    if (availspace < 0)
-	availspace = 2000000000;	/* Over 2G ? */
-    availspace >>= 1;
-
     if (ferror(SS->mfp)) {
 	type(SS, 452, m430, (char *) NULL);
-	mail_abort(SS->mfp);
-	SS->mfp = NULL;
     } else if (SS->sizeoptval > maxsize && maxsize > 0) {
 	type(SS, -552, "5.3.4", "This message is larger, than our maximum acceptable");
 	type(SS,  552, "5.3.4", "incoming message size of  %d  chars.", maxsize);
-	mail_abort(SS->mfp);
-	SS->mfp = NULL;
     } else if (SS->sizeoptval > availspace) {
 	type(SS, 452, "4.3.1", "Try again later, insufficient storage available at the moment");
-	mail_abort(SS->mfp);
-	SS->mfp = NULL;
     } else {
-	if (s) {
-	    int rrc = atoi(s);
-	    type(SS, rrc, s + 4, "Ok");
-	    if (rc >= 400) {
-	      mail_abort(SS->mfp);
-	      SS->mfp = NULL;
-	    }
-	} else
+	if (s)
+	    type(SS, atoi(s), s + 4, "Ok");
+	else
 	    type(SS, 250, "2.1.0", "Sender syntax Ok%s", srcrtestatus);
 	SS->sender_ok = 1;
     }
@@ -738,11 +697,11 @@ const char *buf, *cp;
        tell the spammers exactly what's happening. */
     if ( (SS->state == MailOrHello || SS->state == Mail) &&
 	 policydb != NULL && SS->policyresult < 0 ) {
-      type(SS, -553, m571, "Access denied by the policy analysis functions.");
-      type(SS, -553, m571, "This may be due to your source IP address,");
-      type(SS, -553, m571, "the IP reversal domain, the data you gave for");
-      type(SS, -553, m571, "the HELO/EHLO parameter, or address/domain");
-      type(SS,  553, m571, "you gave at the MAIL FROM:<...> address.");
+      type(SS, -553, "5.1.8", "Access denied by the policy analysis functions.");
+      type(SS, -553, "5.1.8", "This may be due to your source IP address,");
+      type(SS, -553, "5.1.8", "the IP reversal domain, the data you gave for");
+      type(SS, -553, "5.1.8", "the HELO/EHLO parameter, or address/domain");
+      type(SS,  553, "5.1.8", "you gave at the MAIL FROM:<...> address.");
       return;
     }
 
@@ -762,36 +721,30 @@ const char *buf, *cp;
 	type(SS, 503, m551, cp);
 	return;
     }
-
-    if (*cp == ' ') ++cp;
-    if (!strict_protocol) while (*cp == ' ' || *cp == '\t') ++cp;
-
     if (!CISTREQN(cp, "To:", 3)) {
 	type(SS, 501, m552, "where is To: in that?");
 	return;
     }
-    cp += 3;
-    if (!strict_protocol)
-      for (; *cp != '\0' && *cp != '<'; ++cp)
+    for (cp = cp + 3; *cp != '\0' && *cp != '<'; ++cp)
 	if (!isspace(*cp)) {
 	  if (!sloppy) {
-	    type(SS, 501, m513, "where is <...> in that?");
+	    type(SS, 501, m552, "where is <...> in that?");
 	    return;
 	  }
 	  break; /* Sigh, be sloppy.. */
 	}
     if (*cp == '\0') {
-	type(SS, 501, m513, "where is <...> in that?");
+	type(SS, 501, m552, "where is <...> in that?");
 	return;
     } else if (*cp != '<' && !sloppy) {
-	type(SS, 501, m513, "strangeness between : and <");
+	type(SS, 501, m552, "strangeness between : and <");
 	return;
     } else if (*(cp+1) == '>') {
-	type(SS, 501, m513, "Null address valid only as source");
+	type(SS, 501, m552, "Null address valid only as source");
 	return;
     }
     if (*(cp + 1) == '<') {
-	type(SS, 501, m513, "there are too many <'s in that!");
+	type(SS, 501, m552, "there are too many <'s in that!");
 	return;
     }
     if (*cp == '<') {
@@ -804,12 +757,12 @@ const char *buf, *cp;
 	  s += 12;
 	} else {
 	  /* Genuine failure.. */
-	  type821err(SS, 501, m513, buf, "Path data: %s", rfc821_error);
+	  type821err(SS, 501, m552, buf, "Path data: %s", rfc821_error);
 	  return;
 	}
       }
       if (*s == '>') {
-	type(SS, 501, m513, "there are too many >'s in that!");
+	type(SS, 501, m552, "there are too many >'s in that!");
 	return;
       }
       /* Ok, now it is a moment to see, if we have source routes: @a,@b:c@d */
@@ -829,12 +782,12 @@ const char *buf, *cp;
       s = rfc821_path2(cp, strict);
       if (s == cp) {
 	/* Failure.. */
-	type821err(SS, 501, m513, buf, "Path data: %.200s", rfc821_error);
+	type821err(SS, 501, m552, buf, "Path data: %.200s", rfc821_error);
 	return;
       }
 
       if (*s == '>') {
-	type(SS, 501, m513, "there are too many >'s in that!");
+	type(SS, 501, m552, "there are too many >'s in that!");
 	return;
       }
 
@@ -856,18 +809,15 @@ const char *buf, *cp;
 #endif
 
     if (addrlen < 1) {
-	type(SS, 501, m513, "What is an empty recipient?");
+	type(SS, 501, "5.1.3", "What is an empty recipient?");
 	return;
     }
     drpt_notify = NULL;
     drpt_orcpt = NULL;
 
     while (*s) {
-	while (*s == ' ' || (sloppy && *s == '\t')) {
+	while (isascii(*s) && isspace(*s))
 	    ++s;
-	    if (strict_protocol) break;
-	    if (strict && !sloppy) break;
-	}
 	/* IETF-NOTARY  SMTP-RCPT-DRPT extensions */
 	if (CISTREQN("NOTIFY=", s, 7)) {
 	    if (drpt_notify) {
@@ -921,31 +871,29 @@ const char *buf, *cp;
     SS->policyresult = policytest(policydb, &SS->policystate,
 				  POLICY_RCPTTO, cp, addrlen);
     if (logfp) {
-      char *ss = policymsg(policydb, &SS->policystate);
-      if (SS->policyresult != 0 || ss != NULL) {
+      char *s = policymsg(policydb, &SS->policystate);
+      if (SS->policyresult != 0 || s != NULL) {
 	fprintf(logfp, "%d#\t-- policy result=%d, msg: %s\n", pid,
-		SS->policyresult, (ss ? ss : "<NONE!>"));
+		SS->policyresult, (s ? s : "<NONE!>"));
 	fflush(logfp);
       }
     }
 
-    if (SS->postmasteronly || SS->policyresult < 0) {
+    if (SS->postmasteronly ||
+	SS->policyresult < 0) {
       if (CISTREQN(cp, "postmaster", 10)) {
 	/* Rejected, but it seems to be a postmaster ??? */
 	if (addrlen == 10)
 	  SS->policyresult = 0; /* Plain <postmaster> */
 	else
-	  if (policydb != NULL && SS->policyresult > -100) {
-	    int rc = policytest(policydb, &SS->policystate,
-				POLICY_RCPTPOSTMASTER, cp, addrlen);
-	    if (rc == 0)
-	      SS->policyresult = 0;
-
+	  if (policydb != NULL) {
+	    SS->policyresult = policytest(policydb, &SS->policystate,
+					  POLICY_RCPTPOSTMASTER, cp, addrlen);
 	    if (logfp) {
-	      char *ss = policymsg(policydb, &SS->policystate);
-	      if (SS->policyresult != 0 || ss != NULL) {
+	      char *s = policymsg(policydb, &SS->policystate);
+	      if (SS->policyresult != 0 || s != NULL) {
 		fprintf(logfp, "%d#\t-- policy result=%d, msg: %s\n", pid,
-			SS->policyresult, (ss ? ss : "<NONE!>"));
+			SS->policyresult, (s ? s : "<NONE!>"));
 		fflush(logfp);
 	      }
 	    }
@@ -953,22 +901,22 @@ const char *buf, *cp;
       }
     }
     if (SS->policyresult < 0) {
-	char *ss = policymsg(policydb, &SS->policystate);
+	char *s = policymsg(policydb, &SS->policystate);
 
 	fprintf(SS->mfp, "comment policytest() rejected rcptaddr: <");
 	fwrite(cp, 1, addrlen, SS->mfp);
 	fprintf(SS->mfp,">\n");
 
 	if (SS->policyresult < -99) { /* "soft error, 4XX code */
-	  if (ss != NULL) {
+	  if (s != NULL) {
 	    type(SS,-453, m471, "Policy analysis reported:");
-	    type(SS, 453, m471, "%s", ss);
+	    type(SS, 453, m471, "%s", s);
 	  } else if (SS->policyresult < -103) { /* -104 */
-	    type(SS, -453, m443, "Policy analysis reports temporary DNS error");
-	    type(SS, -453, m443, "with this target domain. Retrying may help,");
-	    type(SS, -453, m443, "or if the condition persists, some further");
-	    type(SS, -453, m443, "work may be in need with the target domain");
-	    type(SS,  453, m443, "DNS servers.");
+	    type(SS, -453, m471, "Policy analysis reports temporary DNS error");
+	    type(SS, -453, m471, "with this target domain. Retrying may help,");
+	    type(SS, -453, m471, "or if the condition persists, some further");
+	    type(SS, -453, m471, "work may be in need with the target domain");
+	    type(SS,  453, m471, "DNS servers.");
 
 	  } else if (SS->policyresult < -102) {
 	    /* Code: -103 */
@@ -979,14 +927,15 @@ const char *buf, *cp;
 	    type(SS, 453, m471, "We don't accept this recipient.");
 	  } else if (SS->policyresult < -100) {
 	    /* Code: -102 */
-	    type(SS,-453, m443, "Policy analysis found DNS error on");
-	    type(SS,-453, m443, "the target address. This address is");
-	    type(SS, 453, m443, "not currently acceptable.");
+	    type(SS,-453, m471, "Policy analysis found DNS error on");
+	    type(SS,-453, m471, "the target address. This address is");
+	    type(SS, 453, m471, "not currently acceptable.");
 	  } else {
-	    type(SS, 453, m443, "Policy rejection on the target address");
+	    type(SS, 453, m471, "Policy rejection on the target address");
 	  }
 	} else {
-	  if (ss != NULL) {
+	  char *s = policymsg(policydb, &SS->policystate);
+	  if (s != NULL) {
 	    type(SS,-553, m571, "Policy analysis reported:");
 	    type(SS, 553, m571, "%s", s);
 	  } else if (SS->policyresult < -2) {
@@ -999,9 +948,9 @@ const char *buf, *cp;
 
 	  } else if (SS->policyresult < -1) {
 	    /* Code: -2 */
-	    type(SS,-553, m543, "Policy analysis found DNS error on");
-	    type(SS,-553, m543, "the target address. This address is");
-	    type(SS, 553, m543, "not currently acceptable.");
+	    type(SS,-553, m571, "Policy analysis found DNS error on");
+	    type(SS,-553, m571, "the target address. This address is");
+	    type(SS, 553, m571, "not currently acceptable.");
 	  } else {
 	    type(SS, 553, m571, "Policy rejection on the target address");
 	  }
@@ -1071,9 +1020,9 @@ const char *buf, *cp;
     if (ferror(SS->mfp)) {
 	type(SS, 452, m430, (char *) NULL);
     } else if (maxsize > 0 && SS->sizeoptsum > maxsize) {
-	type(SS, 552, m534, "Message size exceeds fixed maximum size of %ld chars for acceptable email", maxsize);
+	type(SS, 552, "5.3.4", "Message size exceeds fixed maximum size of %ld chars for acceptable email", maxsize);
     } else if (SS->sizeoptsum > availspace) {
-	type(SS, 452, m431, "insufficient storage space, try again later");
+	type(SS, 452, "4.3.1", "insufficient storage space, try again later");
     } else if (s) {
 	if (SS->from_box && SS->rcpt_count > MaxErrorRecipients) {
 	    type(SS, 552, m571, "SPAM trap -- too many recipients for an empty source address!");
@@ -1100,17 +1049,9 @@ void smtp_turnme(SS, name, cp)
 SmtpState *SS;
 const char *name, *cp;
 {
-    FILE *mfp;
-    while (*cp == ' ' || *cp == '\t') ++cp;
-    if (*cp == 0) {
-	type(SS, 552, "5.0.0", "ETRN needs target domain name parameter.");
-	typeflush(SS);
-	return;
-    }
-
-    mfp = mail_open(MSG_RFC822);
+    FILE *mfp = mail_open(MSG_RFC822);
     if (!mfp) {
-	type(SS, 452, m400, "Failed to initiate ETRN request;  Disk full?");
+	type(SS, 452, m400, "Failed to initiate TURNME request;  Disk full?");
 	typeflush(SS);
 	return;
     }
@@ -1118,9 +1059,9 @@ const char *name, *cp;
     /* printf("050-My uid=%d/%d\r\n",getuid(),geteuid()); */
     runasrootuser();
     if (mail_close_alternate(mfp, TRANSPORTDIR, "")) {
-	type(SS, 452, m400, "Failed to initiate ETRN request;  Permission denied?");
+	type(SS, 452, m400, "Failed to initiate TURNME request;  Permission denied?");
     } else {
-	type(SS, -250, m200, "An ETRN request is initiated - lets hope the system");
+	type(SS, -250, m200, "A TURNME request is initiated - lets hope the system");
 	type(SS, -250, m200, "has resources to honour it.   We call the remote, if");
 	type(SS, 250, m200, "we have anything to send there.");
     }
