@@ -63,7 +63,7 @@ open_gdbm(sip, flag, comment)
 	spl = sp_lookup(symid, spt_files);
 
 	if (spl != NULL && flag == O_RDWR && spl->mark != O_RDWR)
-		close_gdbm(sip);
+		close_gdbm(sip,"open_gdbm");
 	if (flag == O_RDWR)	flag = GDBM_WRITER;
 	else			flag = GDBM_READER;
 	if (spl == NULL || (db = (GDBM_FILE)spl->data) == NULL) {
@@ -117,13 +117,13 @@ reopen:
 	if (val.dptr == NULL) {
 	  if (!retry && gdbm_errno != GDBM_NO_ERROR &&
 	      gdbm_errno != GDBM_EMPTY_DATABASE) {
-	    close_gdbm(sip);
+	    close_gdbm(sip,"search_gdbm");
 	    ++retry;
 	    goto reopen;
 	  }
 	  return NULL;
 	}
-	tmp = newstring(strnsave(val.dptr, val.dsize));
+	tmp = newstring(dupnstr(val.dptr, val.dsize), val.dsize);
 	free(val.dptr);
 	return tmp;
 }
@@ -133,8 +133,9 @@ reopen:
  */
 
 void
-close_gdbm(sip)
+close_gdbm(sip,comment)
 	search_info *sip;
+	const char *comment;
 {
 	GDBM_FILE db;
 	struct spblk *spl;

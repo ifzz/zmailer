@@ -216,6 +216,7 @@ int first_uid = 0;		/* Make the opening connect with the UID of the
 
 int D_alloc = 0;		/* Memory usage debug */
 int no_pipelining = 0;		/* In case the system just doesn't cope with it */
+int prefer_ip6 = 1;
 
 static const char FAILED[] = "failed";
 
@@ -232,12 +233,12 @@ static const char FAILED[] = "failed";
    (even when it violates the protocol..) */
 
 /* Following options can be declared in ESMTP  EHLO response  */
-#define ESMTP_SIZEOPT    0x0001
-#define ESMTP_8BITMIME   0x0002
-#define ESMTP_DSN        0x0004
-#define ESMTP_PIPELINING 0x0008
-#define ESMTP_ENHSTATUS  0x0010
-#define ESMTP_CHUNKING   0x0020 /* RFC 1830 */
+#define ESMTP_SIZEOPT    0x0001 /* RFC 1427/1653/1870 */
+#define ESMTP_8BITMIME   0x0002 /* RFC 1426/1652 */
+#define ESMTP_DSN        0x0004 /* RFC 1891	 */
+#define ESMTP_PIPELINING 0x0008 /* RFC 1854/2197 */
+#define ESMTP_ENHSTATUS  0x0010 /* RFC 2034	 */
+#define ESMTP_CHUNKING   0x0020 /* RFC 1830	 */
 
 
 # ifdef RFC974
@@ -601,26 +602,30 @@ int sig;
 }
 
 
+static char filename[MAXPATHLEN+8000];
+
 int
 main(argc, argv)
 	int argc;
 	char *argv[];
 {
-	char file[MAXPATHLEN+128];
-	char *channel = NULL, *host = NULL;
+	volatile char *channel = NULL, *host = NULL;
 	int i, fd, errflg, c;
-	int smtpstatus;
-	int need_host = 0;
+	volatile int smtpstatus;
+	volatile int need_host = 0;
 	int skip_host = 0;
-	int idle;
-	int noMX = 0;
+	volatile int idle;
+	volatile int noMX = 0;
 	SmtpState SS;
-	struct ctldesc *dp;
+	volatile struct ctldesc *dp;
 #ifdef	BIND
-	int checkmx = 0; /* check all destination hosts for MXness */
+	volatile int checkmx = 0; /* check all destination hosts for MXness */
 #endif	/* BIND */
 	RETSIGTYPE (*oldsig)__((int));
-	const char *smtphost, *punthost = NULL;
+	volatile const char *smtphost, *punthost = NULL;
+
+	setvbuf(stdout, NULL, _IOFBF, 8096*4 /* 32k */);
+	fd_blockingmode(FILENO(stdout)); /* Just to make sure.. */
 
 	pid = getpid();
 	msgfile = "?";
@@ -628,7 +633,9 @@ main(argc, argv)
 	cmdline = &argv[0][0];
 	eocmdline = cmdline;
 
+#if 0
 & oldsig; /* volatile-like trick.. */ & channel; & host; & smtpstatus; & need_host; & idle; &noMX; & dp; & checkmx; & smtphost; & punthost;
+#endif
 
 	memset(&SS,0,sizeof(SS));
 	SS.main_esmtp_on_banner = -1;
@@ -673,7 +680,7 @@ main(argc, argv)
 	SS.remotemsg[0] = '\0';
 	SS.remotehost[0] = '\0';
 	while (1) {
-	  c = getopt(argc, argv, "c:deh:l:p:rsvxDEF:L:HPT:VWZ:78");
+	  c = getopt(argc, argv, "c:deh:l:p:rsvxDEF:L:HPT:VWZ:678");
 	  if (c == EOF)
 	    break;
 	  switch (c) {
@@ -762,6 +769,9 @@ main(argc, argv)
 	  case 'Z':  /* Dummy option to carry HUGE parameter string for
 			the report system to make sense.. at OSF/1, at least */
 	    break;
+	  case '6':
+	    prefer_ip6 = !prefer_ip6;
+	    break;
 	  default:
 	    ++errflg;
 	    break;
@@ -779,13 +789,10 @@ main(argc, argv)
 
 	if (optind < argc) {
 	  host = strdup(argv[optind]);
-	  strncpy(SS.remotehost, host, sizeof(SS.remotehost));
+	  strncpy(SS.remotehost, (char*)host, sizeof(SS.remotehost));
 	  SS.remotehost[sizeof(SS.remotehost)-1] = 0;
 	} else
 	  need_host = 1;
-
-	setvbuf(stdout, NULL, _IOFBF, 8096*4 /* 32k */);
-	fd_blockingmode(FILENO(stdout)); /* Just to make sure.. */
 
 	if (myhostnameopt == 0) {
 	  /* Default it only when not having an explicite value
@@ -795,10 +802,11 @@ main(argc, argv)
 
 	if (conndebug && !debug && host) {
 	  SS.firstmx = 0;
-	  smtpconn(&SS, host, noMX);
+	  smtpconn(&SS, (char*)host, noMX);
 	  exit(0);
 	}
 
+	logfp = NULL;
 	if (logfile != NULL) {
 	  if ((fd = open(logfile, O_CREAT|O_APPEND|O_WRONLY, 0644)) < 0)
 	    fprintf(stdout,
@@ -806,8 +814,7 @@ main(argc, argv)
 		    argv[0], logfile);
 	  else
 	    logfp = (FILE *)fdopen(fd, "a");
-	} else
-	  logfp = NULL;
+	}
 
 	if (logfp)
 	  setvbuf(logfp, NULL, _IOLBF, 0);
@@ -822,8 +829,9 @@ main(argc, argv)
 	/* We need this latter on .. */
 	zopenlog("smtp", LOG_PID, LOG_MAIL);
 
-	/* defer opening a connection until we know there is work */
-	smtpstatus = EX_DATAERR;
+	/* We defer opening a connection until we know there is work */
+
+	smtpstatus = EX_OK;
 	idle = 0;
 	SS.stdinsize = 0;
 	SS.stdincurs = 0;
@@ -844,33 +852,33 @@ main(argc, argv)
 	      report(&SS,"#hungry");
 	  }
 
-	  /* if (fgets(file, sizeof file, stdin) == NULL) break; */
-	  if (ssfgets(file, sizeof(file), stdin, &SS) == NULL)
+	  /* if (fgets(filename, sizeof(filename), stdin) == NULL) break; */
+	  if (ssfgets(filename, sizeof(filename), stdin, &SS) == NULL)
 	    break;
 
 #if !(defined(HAVE_MMAP) && defined(TA_USE_MMAP))
 	  readalready = 0; /* internal body read buffer 'flush' */
 #endif
 	  idle = 0; skip_host = 0;
-	  if (strchr(file, '\n') == NULL) break; /* No ending '\n' !  Must
+	  if (strchr(filename, '\n') == NULL) break; /* No ending '\n' !  Must
 						    have been partial input! */
 	  if (logfp) {
-	    fprintf(logfp,"%s#\tjobspec: %s",logtag(),file);
+	    fprintf(logfp,"%s#\tjobspec: %s",logtag(),filename);
 	  }
-	  if (strcmp(file, "#idle\n") == 0) {
+	  if (strcmp(filename, "#idle\n") == 0) {
 	    idle = 1;
 	    continue; /* XX: We can't stay idle for very long, but.. */
 	  }
-	  if (emptyline(file, sizeof file))
+	  if (emptyline(filename, sizeof(filename)))
 	    break;
 
 	  time(&now);
 
-	  s = strchr(file,'\t');
+	  s = strchr(filename,'\t');
 	  if (s != NULL) {
 	    *s++ = 0;
 
-	    if (host && strcasecmp(host,s)==0) {
+	    if (host && strcasecmp((char*)host,s)==0) {
 	      extern time_t retryat_time;
 
 	      if (now < retryat_time) {
@@ -885,7 +893,7 @@ main(argc, argv)
 
 	    /* If different target host, close the old connection.
 	       In theory we could use same host via MX, but...     */
-	    if (host && strcmp(s,host) != 0) {
+	    if (host && strcmp(s,(char*)host) != 0) {
 	      if (SS.smtpfp) {
 		if (!getout)
 		  smtpstatus = smtpwrite(&SS, 0, "QUIT", 0, NULL);
@@ -897,13 +905,13 @@ main(argc, argv)
 		if (logfp) {
 		  fprintf(logfp, "%s#\t(closed SMTP channel - new host)\n", logtag());
 		}
-		strncpy(SS.remotehost, host, sizeof(SS.remotehost));
+		strncpy(SS.remotehost, (char*)host, sizeof(SS.remotehost));
 		SS.remotehost[sizeof(SS.remotehost)-1] = 0;
 		if (statusreport)
 		  report(&SS, "NewDomain: %s", host);
 	      }
 	    }
-	    if (host) free(host);
+	    if (host) free((void*)host);
 	    host = strdup(s);
 	  } else
 	    if (need_host) {
@@ -913,7 +921,7 @@ main(argc, argv)
 	    }
 
 	  if (debug > 1) { /* "DBGdiag:"-output */
-	    printf("# (fdcnt=%d, file:%.200s, host:%.200s)\n", countfds(), file, host);
+	    printf("# (fdcnt=%d, file:%.200s, host:%.200s)\n", countfds(), filename, host);
 	    fflush(stdout);
 	  }
 
@@ -921,15 +929,15 @@ main(argc, argv)
 	  res_init();
 
 	  if (checkmx)
-	    dp = ctlopen(file, channel, host, &getout, rightmx, &SS, matchroutermxes, &SS);
+	    dp = ctlopen(filename, (char*)channel, (char*)host, &getout, rightmx, &SS, matchroutermxes, &SS);
 	  else
 #endif /* BIND */
-	    dp = ctlopen(file, channel, host, &getout, NULL, NULL, matchroutermxes, &SS);
+	    dp = ctlopen(filename, (char*)channel, (char*)host, &getout, NULL, NULL, matchroutermxes, &SS);
 	  if (dp == NULL) {
-	    printf("#resync %.200s\n", file);
+	    printf("#resync %.200s\n", filename);
 	    fflush(stdout);
 	    if (logfp)
-	      fprintf(logfp, "%s#\tc='%s' h='%s' #resync %s\n", logtag(), channel, host, file);
+	      fprintf(logfp, "%s#\tc='%s' h='%s' #resync %s\n", logtag(), channel, host, filename);
 	    continue;
 	  }
 
@@ -948,46 +956,18 @@ main(argc, argv)
 	    if (SS.verboselog)
 	      setvbuf(SS.verboselog, NULL, _IONBF, 0);
 	  }
-	  if (!SS.smtpfp) {
-	    if ((first_uid = atoi(dp->senders->misc)) < 0 ||
-		first_uid == nobody)
-	      first_uid = daemon_uid;
-
-	    if (!skip_host && !getout) {
-	      if (setjmp(procabortjmp) == 0) {
-		procabortset = 1;
-		smtpstatus = smtpopen(&SS, smtphost, noMX);
-	      } else {
-		smtpstatus = EX_OK; /* We were forcibly aborted .. */
-	      }
-	      procabortset = 0;
-	    }
-
-	    if (smtpstatus != EX_OK) {
-	      /* SMTPOPEN() made diagnostics data -- we report.. */
-	      struct rcpt *rp;
-	      time(&endtime);
-	      notary_setxdelay((int)(endtime-starttime));
-	      /* NOTARY: address / action / status / diagnostic */
-	      for (rp = dp->recipients; rp != NULL; rp = rp->next) {
-		notaryreport(rp->addr->user,NULL,NULL,NULL);
-		diagnostic(rp, smtpstatus, 60, "%s", SS.remotemsg);
-	      }
-	    }
-	  } else
-	    smtpstatus = EX_OK; /* Already open, we have a new job file */
-
 	  if (setjmp(procabortjmp) == 0) {
 	    procabortset = 1;
-	    if (smtpstatus == EX_OK)
-	      smtpstatus = process(&SS, dp, smtpstatus, smtphost, noMX);
-	    if (SS.verboselog)
-	      fclose(SS.verboselog);
-	    SS.verboselog = NULL;
+	    smtpstatus = process(&SS, (struct ctldesc *)dp, smtpstatus,
+				 (char*)smtphost, noMX);
 	  }
 	  procabortset = 0;
 
-	  ctlclose(dp);
+	  if (SS.verboselog)
+	    fclose(SS.verboselog);
+	  SS.verboselog = NULL;
+
+	  ctlclose((struct ctldesc *)dp);
 	} /* while (!getout) ... */
 
 	if (smtpstatus == EX_OK) {
@@ -1023,37 +1003,78 @@ process(SS, dp, smtpstatus, host, noMX)
 	int loggedid;
 	int openstatus = EX_OK;
 
+
+	smtpstatus = EX_OK; /* Hmm... */
 	loggedid = 0;
+
+	SS->firstmx = 0; /* If need be to connect to a new host,
+			    because the socket is not on, we start
+			    from the begin of the MX list */
+
+	*SS->remotemsg = 0;
 
 	for (rp = rphead = dp->recipients; rp != NULL; rp = rp->next) {
 	  if (rp->next == NULL
 	      || rp->addr->link   != rp->next->addr->link
 	      || rp->newmsgheader != rp->next->newmsgheader) {
+
 	    if (smtpstatus == EX_OK && openstatus == EX_OK) {
 	      if (logfp != NULL && !loggedid) {
 		loggedid = 1;
-		fprintf(logfp,
-			"%s#\t%s: %s\n",
-			logtag(), dp->msgfile,
-			dp->logident);
+		fprintf(logfp, "%s#\t%s: %s\n", logtag(), dp->msgfile, dp->logident);
 	      }
-	      if (!SS->smtpfp) {
-		if ((first_uid = atoi(dp->senders->misc)) < 0 ||
-		    first_uid == nobody)
-		  first_uid = daemon_uid;
-		openstatus = smtpopen(SS, host, noMX);
+
+	      do {
+
+		if (!SS->smtpfp) {
+	
+		  /* Make the opening connect with the UID of the
+		     sender (atoi(rp->addr->misc)), unless it is
+		     "nobody", in which case use "daemon"      */
+		  if ((first_uid = atoi(dp->senders->misc)) < 0 ||
+		      first_uid == nobody)
+		    first_uid = daemon_uid;
+
+		  openstatus = smtpopen(SS, host, noMX);
+		  if (openstatus != EX_OK && openstatus != EX_TEMPFAIL) {
+		    for (;rphead && rphead != rp->next; rphead = rphead->next){
+		      if (rphead->lockoffset != 0) {
+			notaryreport(NULL, FAILED, NULL, NULL);
+			diagnostic(rphead, openstatus, 0, "%s", SS->remotemsg);
+		      }
+		    }
+		    break;
+		  }
+		}
+
+		if (openstatus == EX_OK)
+		  smtpstatus = deliver(SS, dp, rphead, rp->next);
+
+		/* Only for EX_TEMPFAIL, or for any non EX_OK ? */
+		if (smtpstatus == EX_TEMPFAIL) {
+		  smtpclose(SS);
+		  notary_setwtt(NULL);
+		  notary_setwttip(NULL);
+		  if (logfp)
+		    fprintf(logfp, "%s#\t(closed SMTP channel - after delivery failure)\n", logtag());
+		  if (SS->verboselog)
+		    fprintf(SS->verboselog, "(closed SMTP channel - after delivery failure; firstmx = %d, mxcount=%d)\n",SS->firstmx,SS->mxcount);
+		}
+
+		/* If delivery fails, try other MX hosts */
+	      } while ((smtpstatus == EX_TEMPFAIL) &&
+		       (SS->firstmx < SS->mxcount));
+
+	      /* Report (and unlock) all those recipients which aren't
+		 otherwise diagnosed.. */
+
+	      for (;rphead && rphead != rp->next; rphead = rphead->next) {
+		if (rphead->lockoffset != 0) {
+		  notaryreport(NULL, FAILED, NULL, NULL);
+		  diagnostic(rphead, EX_TEMPFAIL, 0, "%s", SS->remotemsg);
+		}
 	      }
-	      if (openstatus == EX_OK)
-		smtpstatus = deliver(SS, dp, rphead, rp->next);
-	      /*
-		 if (openstatus != EX_OK) {
-		 smtpclose(SS);
-		 notary_setwtt(NULL);
-		 notary_setwttip(NULL);
-		 if (logfp)
-		 fprintf(logfp, "%s#\t(closed SMTP channel - after delivery failure)\n", logtag());
-		 }
-	       */
+
 	      rphead = rp->next;
 	    } else {
 	      time(&endtime);
@@ -1065,13 +1086,14 @@ process(SS, dp, smtpstatus, host, noMX)
 		notaryreport(rp->addr->user,FAILED,
 			     "5.0.0 (Target status indeterminable)",
 			     NULL);
-		diagnostic(rphead, smtpstatus, 60, "%s", SS->remotemsg);
+		diagnostic(rphead, EX_TEMPFAIL, 60, "%s", SS->remotemsg);
 
 		rphead = rphead->next;
 	      }
 	    }
 	  }
 	}
+
 	return smtpstatus;
 }
 /*
@@ -1145,7 +1167,8 @@ deliver(SS, dp, startrp, endrp)
 	    if ((force_7bit || (SS->ehlo_capabilities & ESMTP_8BITMIME)== 0) &&
 		!ascii_clean && !force_8bit) {
 	      convertmode = _CONVERT_QP;
-	      downgrade_headers(startrp, convertmode, SS->verboselog);
+	      if (!downgrade_headers(startrp, convertmode, SS->verboselog))
+		convertmode = _CONVERT_NONE; /* Failed! */
 	    }
 	    break;
 	  case 9:		/* C-T-E: Quoted-Printable */
@@ -1153,7 +1176,8 @@ deliver(SS, dp, startrp, endrp)
 	      /* Force(d) to decode Q-P while transfer.. */
 	      convertmode = _CONVERT_8BIT;
 	      /*  UPGRADE TO 8BIT !  */
-	      qp_to_8bit(startrp);
+	      if (!qp_to_8bit(startrp))
+		convertmode = _CONVERT_NONE;
 	      content_kind = 10;
 	      ascii_clean = 0;
 	    }
@@ -1456,8 +1480,12 @@ deliver(SS, dp, startrp, endrp)
 		notaryreport(rp->addr->user,FAILED,NULL,NULL);
 		diagnostic(rp, EX_TEMPFAIL, 0, "%s", SS->remotemsg);
 	      }
+#if 0
 	    if (SS->smtpfp)
 	      smtpwrite(SS, 0, "RSET", 0, NULL);
+#endif
+	    if (SS->verboselog)
+	      fprintf(SS->verboselog," .. timeout ? smtp_sync() rc = %d\n",r);
 	    return r;
 	  }
 	  /* Successes are reported AFTER the DATA-transfer is ok */
@@ -1872,8 +1900,8 @@ appendlet(SS, dp, convertmode)
 		      "500 (msgbuffer write IO-error[2]! [%s] DATA %d/%d [%d%%])",
 		      strerror(errno),
 		      SS->hsize, SS->msize, (SS->hsize*100+SS->msize/2)/SS->msize);
-	      MFPCLOSE
 	      alarm(0);
+	      MFPCLOSE
 	      return EX_IOERR;
 	    }
 #if (defined(HAVE_MMAP) && defined(TA_USE_MMAP))
@@ -2166,6 +2194,7 @@ writemimeline(SS, buf, len, convertmode)
 	    }
 	    /* Any other char which needs quoting ? */
 	    if (c == '='  ||  c > 126 ||
+		(column == 0 && (c == 'F' || c == '.')) ||
 		(c != '\n' && c != '\t' && c < 32)) {
 
 	      ssputc(SS, '=', fp);
@@ -2286,8 +2315,7 @@ smtpopen(SS, host, noMX)
 	if (debug) {
 	  fprintf(logfp, "%s#\tsmtpopen: connecting to %.200s\n", logtag(), host);
 	}
-	SS->firstmx = 0;
-	SS->mxcount = 0;
+
 	do {
 
 	  SS->esmtp_on_banner = SS->main_esmtp_on_banner;
@@ -2344,7 +2372,6 @@ smtpopen(SS, host, noMX)
 		if (logfp)
 		  fprintf(logfp, "%s#\t(closed SMTP channel - HELO failed(2))\n", logtag());
 	      }
-	      ++ SS->firstmx;
 	    }
 	  }
 
@@ -2354,8 +2381,8 @@ smtpopen(SS, host, noMX)
 	    fprintf(SS->verboselog," retries=%d firstmx=%d mxcount=%d\n",
 		    retries, SS->firstmx, SS->mxcount);
 
-	} while (i == EX_TEMPFAIL && SS->firstmx < SS->mxcount &&
-		 retries < SS->mxcount);
+	} while ((i == EX_TEMPFAIL) && (SS->firstmx < SS->mxcount));
+
 	if (debug) {
 	  fprintf(logfp, "%s#\tsmtpopen: status = %d\n", logtag(), i);
 	}
@@ -2382,8 +2409,17 @@ smtpconn(SS, host, noMX)
 
 	SS->literalport = -1;
 
-	if (SS->firstmx == 0)
+	if (SS->firstmx == 0) {
+	  SS->mxcount = 0;
+	  /* Cleanup of the MXH array */
+	  for (i = 0; i < MAXFORWARDERS; ++i) {
+	    if (SS->mxh[i].host != NULL)
+	      free(SS->mxh[i].host);
+	    if (SS->mxh[i].ai != NULL)
+	      freeaddrinfo(SS->mxh[i].ai);
+	  }
 	  memset(SS->mxh, 0, sizeof(SS->mxh));
+	}
 
 #ifdef	BIND
 	h_errno = 0;
@@ -2394,13 +2430,15 @@ smtpconn(SS, host, noMX)
 	if (debug) {
 	  fprintf(logfp, "%s#\tsmtpconn: host = %.200s\n", logtag(), host);
 	}
-	if (SS->verboselog)
-	  fprintf(SS->verboselog,"SMTP: Connecting to host: %.200s\n",host);
 	if (host[0] == '"' && host[1] == '[')
 	  ++host;
+
 	if (*host == '[') {	/* hostname is IP address domain literal */
 	  char *cp, buf[BUFSIZ];
 	  const char *hcp;
+
+	  if (SS->verboselog)
+	    fprintf(SS->verboselog,"SMTP: Connecting to host: %.200s (IP literal)\n",host);
 
 	  for (cp = buf, hcp = host+1 ;
 	       *hcp != 0 && *hcp != ']' && cp < (buf+BUFSIZ-1) ;
@@ -2462,12 +2500,19 @@ smtpconn(SS, host, noMX)
 	    return EX_NOHOST;
 	  }
 
+	  SS->mxcount = 0;
 	  retval = makeconn(SS, ai, -2);
+
 	} else {
+
+	  /* HOSTNAME; (non-literal) */
+
+	  if (SS->verboselog)
+	    fprintf(SS->verboselog,"SMTP: Connecting to host: %.200s firstmx=%d mxcount=?\n",host,SS->firstmx);
 	  hbuf[0] = '\0';
 	  errno = 0;
 
-	  SS->mxh[0].host = NULL;	/* use the hostent we got */
+	  /* use the hostent we got */
 #ifdef	BIND
 	  /*
 	   * Look for MX RR's. If none found, use the hostentry in hp.
@@ -2527,6 +2572,13 @@ smtpconn(SS, host, noMX)
 	  }
 #endif /* BIND */
 	  if (SS->mxcount == 0 || SS->mxh[0].host == NULL) {
+
+	    /* Condition ( SS->mxcount > 0 && SS->mxh[0].host == NULL ) can be also
+	       considered as: Instant (Configuration?) Error; No usable MXes, possibly
+	       we are at the lowest MX priority level, and somebody has made some
+	       configuration errors... */
+
+
 	    errno = 0;
 	    /* Either forbidden MX usage, or does not have MX entries! */
 
@@ -2591,8 +2643,13 @@ if (SS->verboselog)
 			  "smtp; 500 (nameserver data inconsistency. All MXes rejected [we are the best?], no address: '%.200s')", host);
 #if 1
 		  zsyslog((LOG_ERR, "%s", SS->remotemsg));
-		  r = EX_TEMPFAIL; /* This gives delayed rejection (after a timeout) */
+		  r = EX_NOHOST;
 #endif
+		} else if (gai_err == EAI_NONAME || gai_err == EAI_NODATA) {
+		  sprintf(SS->remotemsg,
+			  "smtp; 500 (nameserver data inconsistency. No MX, no address: '%.200s')",
+			  host);
+		  r = EX_NOHOST; /* Can do instant reject */
 		} else {
 		  sprintf(SS->remotemsg,
 			  "smtp; 500 (nameserver data inconsistency. No MX, no address: '%.200s', errno=%s, gai_errno='%s')",
@@ -2624,8 +2681,10 @@ if (SS->verboselog)
 	    freeaddrinfo(ai);
 	    ai = NULL;
 	  } else {
+
 	    /* Has valid MX records, they have been suitably randomized
 	       at  getmxrr(), and are now ready for use.  */
+
 	    retval = EX_UNAVAILABLE;
 
 	    for (i = SS->firstmx; (i < SS->mxcount &&
@@ -2636,27 +2695,15 @@ if (SS->verboselog)
 	      notary_setwtt(buf);
 
 	      r = makeconn(SS, SS->mxh[i].ai, i);
-	      if (SS->mxh[i].ai != NULL)
-		freeaddrinfo(SS->mxh[i].ai);
-	      SS->mxh[i].ai = NULL;
+	      SS->firstmx = i+1;
 	      if (r == EX_OK) {
-		while (SS->mxh[i].host != NULL) {
-		  free(SS->mxh[i].host);
-		  freeaddrinfo(SS->mxh[i].ai);
-		  SS->mxh[i++].host = NULL;
-		}
 		retval = EX_OK;
 		break;
 	      } else if (r == EX_TEMPFAIL)
 		retval = EX_TEMPFAIL;
-	      if (SS->mxh[i].host != NULL)
-		free(SS->mxh[i].host);
-	      SS->mxh[i].host = NULL;
-	      freeaddrinfo(SS->mxh[i].ai);
-	      SS->firstmx = i+1;
 	    }
 	  }
-	}
+	} /* end of HOSTNAME MX lookup processing */
 
 	if (debug) {
 	  fprintf(logfp,
@@ -2868,7 +2915,8 @@ vcsetup(SS, sa, fdp, hostname)
 	int *fdp;
 	char *hostname;
 {
-	int af, addrsiz, port;
+	int af, port;
+	volatile int addrsiz;
 	register int sk;
 	struct sockaddr_in *sai = (struct sockaddr_in *)sa;
 	struct sockaddr_in sad;
@@ -2888,8 +2936,9 @@ vcsetup(SS, sa, fdp, hostname)
 	int errnosave;
 	char *se;
 
+#if 0
 	& addrsiz;
-
+#endif
 	time(&now);
 
 	af = sa->sa_family;
@@ -3203,8 +3252,13 @@ int sig;
 	errno = EINTR;
 	SIGNAL_HANDLE(sig, sig_alarm);
 	SIGNAL_RELEASE(sig);
-	if (!noalarmjmp)
+	if (!noalarmjmp) {
+#ifdef __alpha
+	  zsyslog((LOG_ERR,"sigalrm(PC=%lx SP=%lx)",
+		   alarmjmp[2], alarmjmp[34]));
+#endif
 	  longjmp(alarmjmp, 1);
+	}
 }
 
 #ifdef HAVE_STDARG_H
@@ -3254,7 +3308,7 @@ rmsgappend(va_alist)
 }
 
 /*
- *  SMTP PIPELINING (RFC 1854) support uses model of:
+ *  SMTP PIPELINING (RFC 1854/2197) support uses model of:
  *       1st RCPT is for "MAIL FROM:<>".. -line
  *       2..n-1: are actual RCPT TO:<> -lines
  *	 n:th is the "DATA"-line.
@@ -3301,7 +3355,8 @@ int bdat_flush(SS, lastflg)
 	SmtpState *SS;
 	int lastflg;
 {
-	int pos, i, wrlen, r;
+	int pos, i, wrlen;
+	volatile int r;   /* longjmp() globber danger */
 	char lbuf[80];
 	jmp_buf oldalarmjmp;
 	memcpy(oldalarmjmp, alarmjmp, sizeof(alarmjmp));
@@ -3314,6 +3369,7 @@ int bdat_flush(SS, lastflg)
 	r = smtpwrite(SS, 1, lbuf, 1 /* ALWAYS "pipeline" */, NULL);
 	if (r != EX_OK)
 	  return r;
+
 
 	if (setjmp(alarmjmp) == 0) {
 	  for (pos = 0; pos < SS->chunksize;) {
@@ -3337,22 +3393,23 @@ int bdat_flush(SS, lastflg)
 	      return EX_TEMPFAIL;
 	    }
 	  }
-	}
-	SS->chunksize = 0;
-	alarm(0);
-	memcpy(alarmjmp, oldalarmjmp, sizeof(alarmjmp));
+	  alarm(0);
+	  SS->chunksize = 0;
 
-	if (gotalarm)
-	  return EX_TEMPFAIL;
-
-	if (SS->smtpfp) {
-	  if (lastflg || ! SS->pipelining)
-	    r = smtp_sync(SS, r, 0);
-	  else
-	    r = smtp_sync(SS, r, 1); /* non-blocking */
+	  if (SS->smtpfp) {
+	    if (lastflg || ! SS->pipelining)
+	      r = smtp_sync(SS, r, 0);
+	    else
+	      r = smtp_sync(SS, r, 1); /* non-blocking */
+	  } else {
+	    r = EX_TEMPFAIL;
+	  }
 	} else {
+	  /* Arrival of alarm is caught... */
 	  r = EX_TEMPFAIL;
+	  alarm(0);
 	}
+	memcpy(alarmjmp, oldalarmjmp, sizeof(alarmjmp));
 	return r;
 }
 
@@ -3523,20 +3580,20 @@ smtp_sync(SS, r, nonblocking)
 	volatile int rc = EX_OK, len;
 	volatile int some_ok = 0;
 	volatile int datafail = EX_OK;
-	int err;
+	volatile int err = 0;
 	char buf[512];
 	char *p;
 	static int continuation_line = 0;
 	static int first_line = 1;
 
 	if (!nonblocking) {
-	  unsigned int oldalarm;
+	  volatile unsigned int oldalarm;
 	  jmp_buf oldalarmjmp;
 	  memcpy(oldalarmjmp, alarmjmp, sizeof(alarmjmp));
 
-	  oldalarm = alarm(timeout);
 	  gotalarm = 0;
 	  if (setjmp(alarmjmp) == 0) {
+	    oldalarm = alarm(timeout);
 	    fflush(SS->smtpfp);			/* Flush output */
 	  }
 	  if (gotalarm)
@@ -3598,26 +3655,34 @@ smtp_sync(SS, r, nonblocking)
 	    if (nonblocking) {
 	      int oldflags = fd_nonblockingmode(infd);
 
+	      errno = 0;
 	      len = read(infd,buf,sizeof(buf));
-	      err = errno;
+	      if (len < 0)
+		err = errno;
 
 	      if (oldflags >= 0)
 		fcntl(infd, F_SETFL, oldflags);
 
 	    } else {
+	      errno = 0;
 	      len = read(infd,buf,sizeof(buf));
-	      err = errno;
+	      if (len < 0)
+		err = errno;
 	    }
 	    
 	    if (len < 0) {
 	      /* Some error ?? How come ?
 		 We have select() confirmed input! */
 	      if (nonblocking) {
-		if (err == EINTR || err == EAGAIN)
+		if (err == EINTR || err == EAGAIN) {
+		  err = 0;
 		  break; /* XX: return ?? */
+		}
 	      } else {
-		if (err == EINTR || err == EAGAIN)
+		if (err == EINTR || err == EAGAIN) {
+		  err = 0;
 		  goto reread_line;
+		}
 	      }
 	      /* XX: what to do with the error ? */
 	      if (logfp)
@@ -3635,6 +3700,7 @@ smtp_sync(SS, r, nonblocking)
 	      if (SS->verboselog)
 		fprintf(SS->verboselog,"Remote hung up on us while %d responses missing\n",
 			SS->pipeindex - idx);
+	      err = EX_TEMPFAIL;
 	      break;
 	    } else {
 	      /* more data for processing.. munch munch.. */
@@ -3823,10 +3889,19 @@ if (SS->verboselog) fprintf(SS->verboselog,"[Some OK - code=%d, idx=%d, pipeinde
 	  }
 	}
 
-	if (some_ok)
-	  rc = EX_OK;
+	/* if (some_ok) */
+	rc = EX_OK;
 	if (datafail != EX_OK)
 	  rc = datafail;
+	if (rc == EX_OK && err != 0)
+	  rc = EX_TEMPFAIL; /* Some timeout happened at the response read */
+	if (SS->rcptstates & FROMSTATE_400)
+	  rc = EX_TEMPFAIL; /* MAIL FROM was a 4** code */
+
+	if (rc != EX_OK && logfp)
+	    fprintf(logfp,"%s#\t smtp_sync() did yield code %d\n", logtag(), rc);
+	if (SS->verboselog)
+	  fprintf(SS->verboselog," smtp_sync() did yield code %d\n", rc);
 
 	return rc;
 }
@@ -3886,9 +3961,9 @@ smtpwrite(SS, saverpt, strbuf, pipelining, syncrp)
 	struct rcpt *syncrp;
 {
 	register char *s;
-	char *cp;
+	volatile char *cp;
 	int response, infd, outfd, rc;
-	int r = 0, i;
+	volatile int r = 0, i;
 	char *se;
 	char *status = NULL;
 	char buf[2*8192]; /* XX: static buffer - used in several places */
@@ -3896,8 +3971,9 @@ smtpwrite(SS, saverpt, strbuf, pipelining, syncrp)
 	jmp_buf oldalarmjmp;
 	memcpy(oldalarmjmp, alarmjmp, sizeof(alarmjmp));
 
+#if 0
 	&cp; &r; &i;
-
+#endif
 	gotalarm = 0;
 
 	/* we don't need to turn alarms off again (yay!) */
@@ -4052,7 +4128,7 @@ smtpwrite(SS, saverpt, strbuf, pipelining, syncrp)
 	  alarm(timeout);
 	  if (setjmp(alarmjmp) == 0) {
 	    gotalarm = 0;
-	    r = read(infd, cp, sizeof(buf) - (cp - buf));
+	    r = read(infd, (char*)cp, sizeof(buf) - (cp - buf));
 	  } else
 	    r = -1;
 
@@ -4061,8 +4137,8 @@ smtpwrite(SS, saverpt, strbuf, pipelining, syncrp)
 
 	  if (r > 0) {
 	    if (SS->verboselog)
-	      fwrite(cp,r,1,SS->verboselog);
-	    s = cp;
+	      fwrite((char*)cp,r,1,SS->verboselog);
+	    s = (char*)cp;
 	    cp += r;
 	    for ( ; s < cp; ++s ) {
 	      switch (i) {
@@ -4131,7 +4207,6 @@ smtpwrite(SS, saverpt, strbuf, pipelining, syncrp)
 	    }
 
 	    dflag = 0;
-	    SS->firstmx = 0;
 	    if (SS->verboselog)
 	      fprintf(SS->verboselog,"%s\n",SS->remotemsg);
 	    smtpclose(SS);
@@ -4511,15 +4586,24 @@ if (SS->verboselog)
 	      maxpref = mx[nmx].pref;
 	  }
 
-	  mx[nmx].ai   = ai;
-
-	  mx[nmx].host = (msgdata *)strdup((void*)buf);
-	  if (mx[nmx].host == NULL) {
-	    fprintf(stderr, "Out of virtual memory!\n");
-	    exit(EX_OSERR);
+	  /* Separate all addresses into their own MXes */
+	  i = nmx;
+	  while (ai && nmx < maxmx) {
+	    mx[nmx].ai   = ai;
+	    ai = ai->ai_next;
+	    mx[nmx].ai->ai_next = NULL;
+	    mx[nmx].host = (msgdata *)strdup((void*)buf);
+	    if (mx[nmx].host == NULL) {
+	      fprintf(stderr, "Out of virtual memory!\n");
+	      exit(EX_OSERR);
+	    }
+	    if (nmx > i) {
+	      mx[nmx].pref   = mx[i].pref;
+	      mx[nmx].expiry = mx[i].expiry;
+	    }
+	    ++nmx;
 	  }
 	  /* [mea] Canonicalized this target & got A/AAAA records.. */
-	  ++nmx;
 	  SS->mxcount = nmx;
 	}
 
@@ -4633,6 +4717,20 @@ if (SS->verboselog)
 	      mx[i+k] = mx[i+l];
 	      mx[i+l] = mxtemp;
 	    }
+#if defined(AF_INET6) && defined(INET6)
+	    if (prefer_ip6) {
+	      int l; /* Bring IPv6 addresses before IPv4 ones */
+	      for (l = 0, k = 1; k < len; ++k) {
+		if (mx[l].ai->ai_family == PF_INET &&
+		    mx[k].ai->ai_family == PF_INET6) {
+		  mxtemp = mx[k];
+		  mx[k] = mx[l];
+		  mx[l] = mxtemp;
+		  ++l;
+		}
+	      }
+	    }
+#endif
 	  }
 	  /* Processed that preference, now next */
 	  i = j-1;
@@ -4669,7 +4767,7 @@ rightmx(spec_host, addr_host, cbparam)
 	void	*cbparam;
 {
 	SmtpState *SS = cbparam;
-	int	i;
+	int	i, rc;
 
 	if (cistrcmp(spec_host, addr_host) == 0)
 	  return 1;
@@ -4691,15 +4789,14 @@ rightmx(spec_host, addr_host, cbparam)
 	default:
 	  return 0;
 	}
+	rc = 0;
 	for (i = 0; SS->mxh[i].host != NULL; ++i) {
-	  if (cistrcmp((const void*)SS->mxh[i].host, SS->remotehost) == 0) {
-	    while (SS->mxh[i].host != NULL) {
-	      freeaddrinfo(SS->mxh[i].ai);
-	      free(SS->mxh[i++].host);
-	    }
-	    return 1;
-	  }
+	  if (cistrcmp((const void*)SS->mxh[i].host, SS->remotehost) == 0)
+	    rc = 1;
+	  freeaddrinfo(SS->mxh[i].ai);
+	  SS->mxh[i].ai = NULL;
 	  free(SS->mxh[i].host);
+	  SS->mxh[i++].host = NULL;
 	}
 	return 0;
 }

@@ -55,21 +55,27 @@ static conscell	*find_errto __((conscell *list));
 
 #define dprintf	if (D_sequencer) printf
 
-#define	QCHANNEL(x)	(x)->string
-#define	QHOST(x)	(cdr(x))->cstring
-#define	QUSER(x)	(cddr(x))->cstring
-#define	QATTRIBUTES(x)	(cdr(cddr(x)))->string
+#define	QCHANNEL(x)	(x)
+#define	QHOST(x)	cdr(x)
+#define	QUSER(x)	cddr(x)
+#define	QATTRIBUTES(x)	cdr(cddr(x))
 
 
 conscell *
 makequad()
 {
-	conscell *l, *tmp;
+	conscell *l;
+	GCVARS1;
 
-	l = conststring(NULL);
-	cdr(l) = conststring(NULL);
-	cddr(l) = conststring(NULL);
-	cdr(cddr(l)) = conststring(NULL);
+	l = NULL;
+	GCPRO1(l);
+
+	l = conststring(NULL, 0);
+	cdr(l) = conststring(NULL, 0);
+	cddr(l) = conststring(NULL, 0);
+	cdr(cddr(l)) = conststring(NULL, 0);
+
+	UNGCPRO1;
 	return l;
 }
 
@@ -78,10 +84,9 @@ struct envelope *qate;
 int
 iserrmessage()
 {
-	return (qate != NULL
-		&& qate->e_from_trusted != NULL
-		&& (QCHANNEL(qate->e_from_trusted) == NULL
-		    || CISTREQ(QCHANNEL(qate->e_from_trusted), "error")));
+	return (qate != NULL && qate->e_from_trusted != NULL &&
+		(QCHANNEL(qate->e_from_trusted)->cstring == NULL ||
+		 CISTREQ(QCHANNEL(qate->e_from_trusted)->cstring, "error")));
 }
 
 
@@ -95,11 +100,12 @@ run_rfc822(argc, argv)
 	int argc;
 	const char *argv[];
 {
-	struct envelope *e;
+	struct envelope *e; /* TWO GC PROTECTABLE ITEMS! */
 	const char *file;
 	char buf[8196];   /* FILE* buffer, will be released at fclose() */
-	int status, errflg;
+	int status = PERR_OK, errflg;
 	memtypes oval;
+	GCVARS2;
 
 	errflg = 0;
 #if 0
@@ -131,6 +137,9 @@ run_rfc822(argc, argv)
 	stickymem = MEM_TEMP;	/* per-message space */
 
 	e = (struct envelope *)tmalloc(sizeof (struct envelope));
+	/* XXX: If this tmalloc() fails, we crash! */
+	memset(e, 0, sizeof(*e)); /* Lots of pointers, etc here! */
+	GCPRO2(e->e_from_trusted, e->e_from_resolved);
 	qate = e;
 
 	if ((e->e_fp = fopen(file, "r")) == NULL) {
@@ -205,6 +214,7 @@ run_rfc822(argc, argv)
 #ifdef	XMEM
 	mal_contents(stdout);
 #endif	/* XMEM */
+	UNGCPRO2;
 	return status;
 }
 
@@ -621,6 +631,18 @@ FILE *mfp;
 	}
 }
 
+static int nullhost __((conscell *cs));
+static int
+nullhost(cs)
+	conscell *cs;
+{
+	const char *s = cs->cstring;
+
+	return (s == NULL || *s == '\0' || strcmp(s, "-") == 0);
+	/* actually we should also check for localhostness, but lets not
+	   get carried away... */
+}
+
 /* Send the message back to originator with user-friendly chastizing errors */
 
 static void
@@ -809,8 +831,11 @@ mkSender(e, name, flag)
 	struct addr *pp, *qp, **ppp;
 	conscell *l;
 	int didbracket;
-	struct spblk *spl;
-	
+	GCVARS1;
+
+	l = NULL;
+	GCPRO1(l);
+
 	sh = (struct header *)tmalloc(sizeof (struct header));
 	sh->h_pname = e->e_resent ? "Resent-From" : "From";
 	sh->h_descriptor = senderDesc();
@@ -837,7 +862,12 @@ mkSender(e, name, flag)
 			if (pp->p_next == NULL)
 				break;
 		}
-	} else if ((spl = sp_lookup(symbol(name), spt_fullnamemap)) != NULL) {
+	} else {
+	  spkey_t spk = symbol_lookup_db(name, spt_fullnamemap->symbols);
+	  struct spblk *spl = NULL;
+	  if (spk)
+	    spl = sp_lookup(spk, spt_fullnamemap);
+	  if (spk && spl != NULL && (char*)(spl->data) != NULL) {
 		*ppp = (struct addr *)tmalloc(sizeof (struct addr));
 		pp = *ppp;
 		ppp = &pp->p_next;
@@ -845,6 +875,7 @@ mkSender(e, name, flag)
 					 strlen((char *)spl->data));
 		pp->p_tokens->t_type = Word;
 		pp->p_type = aPhrase;
+	  }
 	}
 	if (sh->h_contents.a->a_tokens != NULL) {	/* 'Full Name <' */
 		*ppp = (struct addr *)tmalloc(sizeof (struct addr));
@@ -865,7 +896,7 @@ mkSender(e, name, flag)
 			l = pickaddress(l);
 			flag = (QUSER(l) == NULL || !nullhost(QHOST(l)));
 			if (!flag)
-				flag = !CISTREQ(QUSER(l), name);
+			  flag = !CISTREQ(QUSER(l)->cstring, name);
 		} else
 			flag = 1;
 	} else
@@ -920,6 +951,7 @@ mkSender(e, name, flag)
 	sh->h_contents = hdr_scanparse(e, sh, 0, 0);
 #endif
 	/* X: optimize: save this in a hashtable somewhere */
+	UNGCPRO1;
 	return sh;
 }
 
@@ -982,10 +1014,15 @@ mkTrace(e)
 	} else
 		th->h_contents.r->r_with = NULL;
 	/* id */
-	na = (struct addr *)tmalloc(sizeof (struct addr));
-	na->p_tokens = makeToken(e->e_file, strlen(e->e_file));
-	na->p_next = NULL;
-	na->p_type = anAddress;	/* really a message id */
+	{
+	  char taspid[32];
+	  taspoolid(taspid, e->e_statbuf.st_mtime, (long)e->e_statbuf.st_ino);
+
+	  na = (struct addr *)tmalloc(sizeof (struct addr));
+	  na->p_tokens = makeToken(taspid, strlen(taspid));
+	  na->p_next = NULL;
+	  na->p_type = anAddress;	/* really a message id */
+	}
 	ap = (struct address *)tmalloc(sizeof (struct address));
 	ap->a_tokens = na;
 	ap->a_next = NULL;
@@ -1031,15 +1068,6 @@ rwalloc(rwpp)
 	return p;
 }
 
-int
-nullhost(s)
-	const char *s;
-{
-	return (s == NULL || *s == '\0' || strcmp(s, "-") == 0);
-	/* actually we should also check for localhostness, but lets not
-	   get carried away... */
-}
-
 conscell *
 pickaddress(l)
 	conscell *l;
@@ -1054,7 +1082,7 @@ pickaddress(l)
 	for (p = NULL, la = car(l); la != NULL && LIST(la) ; la = cdr(la)) {
 		/* AND addresses; i.e. exploded address list or one address */
 		for (lx = car(la); lx != NULL && LIST(lx) ; lx = cdr(lx)) {
-			if (STRING(cdar(lx)) && nullhost(cdar(lx)->string)) {
+			if (STRING(cdar(lx)) && nullhost(cdar(lx))) {
 				p = lx;
 				break;
 			}
@@ -1072,15 +1100,15 @@ thesender(e, a)
 	struct envelope *e;
 	struct address *a;
 {
-	conscell *l;
+	conscell *l; /* Var life ends after return.. no GC protection */
 
 	l = router(a, e->e_statbuf.st_uid, "sender");
 	if (l == NULL)
 		return 0;
 	e->e_from_resolved = pickaddress(l);
 
-	if (QUSER(e->e_from_resolved) == NULL
-	    || !nullhost(QHOST(e->e_from_resolved)))
+	if (QUSER(e->e_from_resolved)->cstring == NULL ||
+	    !nullhost(QHOST(e->e_from_resolved)))
 		return 0;
 	/*
 	 * We assume here, that local mailbox id's correspond to user
@@ -1092,8 +1120,34 @@ thesender(e, a)
 	 * only done if the message file wasn't created by a trusted user,
 	 * so in practise this is less of a problem than it might appear to be.
 	 */
-	return CISTREQ(QUSER(e->e_from_resolved),uidpwnam(e->e_statbuf.st_uid));
+	return CISTREQ(QUSER(e->e_from_resolved)->cstring,
+		       uidpwnam(e->e_statbuf.st_uid));
 }
+
+extern conscell *rwmappend __((conscell *, conscell *, conscell *));
+conscell *rwmappend(rwmroot,info,errtop)
+     conscell *rwmroot, *info, *errtop;
+{
+  conscell *p = NULL;
+  GCVARS4;
+
+  GCPRO4(p, rwmroot, info, errtop);
+
+  if (info) {
+    p = ncons(info);
+    cdr(p) = rwmroot;
+    rwmroot = p;
+  }
+  if (errtop) {
+    p = ncons(info);
+    cdr(p) = rwmroot;
+    rwmroot = p;
+  }
+
+  UNGCPRO4;
+  return rwmroot;
+}
+
 
 
 /*
@@ -1113,9 +1167,10 @@ sequencer(e, file)
 	struct addr    *p = NULL;
 	char	       *ofpname, *path, *qpath;
 	conscell       *l, *routed_addresses, *sender, *to;
+	conscell       *rwmchain;
 	struct rwmatrix *rwhead, *nsp, *rwp = NULL, *rcp = NULL;
 	token822   *t = NULL;
-	int   idnumber, nxor, i;
+	int   idnumber = 0, nxor = 0, i, slen;
 	int   def_uid, header_error, perr;
 	FILE	       *ofp, *vfp;
 	int		ofperrors = 0;
@@ -1126,6 +1181,7 @@ sequencer(e, file)
 	const char     *fromaddr = "?from?";
 	const char     *msgidstr = "?msgid?";
 	const char     *smtprelay = NULL;
+	GCVARS5;
 
 	deferuid = 0;
 
@@ -1301,6 +1357,10 @@ sequencer(e, file)
 	    && h->h_contents.a->a_pname != NULL) {
 		notaryret = h->h_contents.a->a_pname;
 	}
+
+	rwmchain = l = routed_addresses = sender = to = NULL;
+	GCPRO5(l, routed_addresses, sender, to, rwmchain);
+
 	FindEnvelope(eFrom);
 	if (h == NULL && e->e_trusted) {
 		/* Perhaps  'channel error' ??? */
@@ -1311,8 +1371,11 @@ sequencer(e, file)
 			    && (p = ap->a_tokens) != NULL
 			    && p->p_tokens != NULL) {
 				t = p->p_tokens;
+				slen = TOKENLEN(t);
+				l = cdr(QCHANNEL(e->e_from_trusted));
 				QCHANNEL(e->e_from_trusted) =
-					strnsave(t->t_pname, TOKENLEN(t));
+				  newstring(dupnstr(t->t_pname, slen), slen);
+				cdr(QCHANNEL(e->e_from_trusted)) = l;
 			} else {
 				/*
 				 * No origination channel, or channel
@@ -1323,8 +1386,10 @@ sequencer(e, file)
 		}
 	}
 
-	if (deferuid)
+	if (deferuid) {
+	  UNGCPRO5;
 	  return PERR_DEFERRED;
+	}
 
 	if (h == NULL) {
 		dprintf("A sender was NOT specified in the envelope\n");
@@ -1398,10 +1463,13 @@ sequencer(e, file)
 			    && (p = ap->a_tokens) != NULL
 			    && p->p_tokens != NULL) {
 				t = p->p_tokens;
+				slen = TOKENLEN(t);
+				l = cdr(QCHANNEL(e->e_from_trusted));
 				QCHANNEL(e->e_from_trusted) =
-					strnsave(t->t_pname, TOKENLEN(t));
+				  newstring(dupnstr(t->t_pname, slen), slen);
+				cdr(QCHANNEL(e->e_from_trusted)) = l;
 			}
-			if (QCHANNEL(e->e_from_trusted) == NULL) {
+			if (QCHANNEL(e->e_from_trusted)->cstring == NULL) {
 				/*
 				 * the mailer is supposed to know about
 				 * all valid channel identifiers. Gripe.
@@ -1410,14 +1478,26 @@ sequencer(e, file)
 			}
 		}
 		FindEnvelope(eRcvdFrom);
-		if (h != NULL)		/* a previous host was specified */
-			QHOST(e->e_from_trusted) = h->h_contents.a->a_pname;
+		if (h != NULL && h->h_contents.a->a_pname) {
+			/* a previous host was specified */
+			slen = strlen(h->h_contents.a->a_pname);
+			l = cdr(QHOST(e->e_from_trusted));
+			QHOST(e->e_from_trusted) =
+			  newstring(dupnstr(h->h_contents.a->a_pname, slen),slen);
+			cdr(QHOST(e->e_from_trusted)) = l;
+		}
 		FindEnvelope(eUser);
-		if (h != NULL)		/* a previous user was specified */
-			QUSER(e->e_from_trusted) = h->h_contents.a->a_pname;
-		if (QCHANNEL(e->e_from_trusted) == NULL
-		    || QHOST(e->e_from_trusted) == NULL
-		    || QUSER(e->e_from_trusted) == NULL) {
+		if (h != NULL && h->h_contents.a->a_pname) {
+			/* a previous user was specified */
+			slen = strlen(h->h_contents.a->a_pname);
+			l = cdr(QHOST(e->e_from_trusted));
+			QHOST(e->e_from_trusted) =
+			  newstring(dupnstr(h->h_contents.a->a_pname, slen),slen);
+			cdr(QHOST(e->e_from_trusted)) = l;
+		}
+		if (QCHANNEL(e->e_from_trusted)->cstring == NULL
+		    || QHOST(e->e_from_trusted)->cstring == NULL
+		    || QUSER(e->e_from_trusted)->cstring == NULL) {
 			FindEnvelope(eFrom);
 			/* X: assert h != NULL */
 			if (h == NULL || h->h_stamp == BadHeader) {
@@ -1434,6 +1514,8 @@ sequencer(e, file)
 			}
 			if (h == NULL)
 				abort(); /* Failed to make sender header */
+
+			/* This conscell lifetime is limited.. */
 			l = router(h->h_contents.a,
 				   e->e_statbuf.st_uid, "sender");
 			if (l == NULL) {
@@ -1458,13 +1540,13 @@ sequencer(e, file)
 			/* local user */
 			FindEnvelope(eExternal);
 			if (h != NULL || (e->e_statbuf.st_mode & 022)) {
-				optsave(FYI_BREAKIN, e);
-			} else if (QUSER(e->e_from_resolved) != NULL)
-				def_uid =
-					login_to_uid(QUSER(e->e_from_resolved));
-			else if (QUSER(e->e_from_trusted) != NULL)
-				def_uid =
-					login_to_uid(QUSER(e->e_from_trusted));
+			  optsave(FYI_BREAKIN, e);
+			} else if (QUSER(e->e_from_resolved)->cstring != NULL)
+			  def_uid =
+			    login_to_uid(QUSER(e->e_from_resolved)->cstring);
+			else if (QUSER(e->e_from_trusted)->cstring != NULL)
+			  def_uid =
+			    login_to_uid(QUSER(e->e_from_trusted)->cstring);
 		}
 	} else {
 		dprintf("We know sender is local and one of the peons\n");
@@ -1507,17 +1589,31 @@ sequencer(e, file)
 		  set_pname(e, nh, "Sender");
 		}
 	}
-	if (QCHANNEL(e->e_from_trusted) == NULL)
-		QCHANNEL(e->e_from_trusted) = QCHANNEL(e->e_from_resolved);
-	if (QHOST(e->e_from_trusted) == NULL)
-		QHOST(e->e_from_trusted) = QHOST(e->e_from_resolved);
-	if (QUSER(e->e_from_trusted) == NULL)
-		QUSER(e->e_from_trusted) = QUSER(e->e_from_resolved);
-	if (QATTRIBUTES(e->e_from_trusted) == NULL)
-		QATTRIBUTES(e->e_from_trusted)=QATTRIBUTES(e->e_from_resolved);
+	if (QCHANNEL(e->e_from_trusted)->cstring == NULL) {
+	  l = cdr(QCHANNEL(e->e_from_trusted));
+	  QCHANNEL(e->e_from_trusted) = copycell(QCHANNEL(e->e_from_resolved));
+	  cdr(QCHANNEL(e->e_from_trusted)) = l;
+	}
+	if (QHOST(e->e_from_trusted)->cstring == NULL) {
+	  l = cdr(QHOST(e->e_from_trusted));
+	  QHOST(e->e_from_trusted) = copycell(QHOST(e->e_from_resolved));
+	  cdr(QHOST(e->e_from_trusted)) = l;
+	}
+	if (QUSER(e->e_from_trusted)->cstring == NULL) {
+	  l = cdr(QUSER(e->e_from_trusted));
+	  QUSER(e->e_from_trusted) = copycell(QUSER(e->e_from_resolved));
+	  cdr(QUSER(e->e_from_trusted)) = l;
+	}
+	if (QATTRIBUTES(e->e_from_trusted)->cstring == NULL) {
+	  l = cdr(QATTRIBUTES(e->e_from_trusted));
+	  QATTRIBUTES(e->e_from_trusted) = copycell(QATTRIBUTES(e->e_from_resolved));
+	  cdr(QATTRIBUTES(e->e_from_trusted)) = l;
+	}
 
-	if (deferuid)
+	if (deferuid) {
+	  UNGCPRO5;
 	  return PERR_DEFERRED;
+	}
 
 	dprintf("Recipient determination\n");
 	FindEnvelope(eTo);
@@ -1525,6 +1621,7 @@ sequencer(e, file)
 		dprintf("No recipient(s) specified in the envelope\n");
 		if (header_error) {
 			dprintf("Due to header error, we ignore message\n");
+			UNGCPRO5;
 			return PERR_HEADER;
 		}
 		ph = e->e_eHeaders;
@@ -1546,8 +1643,10 @@ sequencer(e, file)
 			e->e_eHeaders = nh;
 		}
 		dprintf("Are we supposed to be psychic?\n");
-		if (ph == e->e_eHeaders)
-			return PERR_NORECIPIENTS;
+		if (ph == e->e_eHeaders) {
+		  UNGCPRO5;
+		  return PERR_NORECIPIENTS;
+		}
 	}
 
 	dprintf("Nuke Bcc/Return-Path/X-Orcpt/X-Envid headers, if any\n");
@@ -1694,7 +1793,6 @@ sequencer(e, file)
 	incoming-rewriting rules for the originating channel.
 #endif
 	dprintf("Route recipient addresses\n");
-	routed_addresses = NULL;
 
 	if (errors_to) free(errors_to);
 	errors_to = NULL;
@@ -1730,24 +1828,24 @@ sequencer(e, file)
 				continue;
 
 			if (routed_addresses == NULL) {
-				conscell *tmp;
 				routed_addresses = ncons(car(l));
 			} else {
 				cdr(s_last(car(l))) = car(routed_addresses);
 				car(routed_addresses) = car(l);
 			}
 			/* freecell(l) */
+			l = NULL;
 		}
-		if (deferuid)
-			return PERR_DEFERRED;
+		if (deferuid) {
+		  UNGCPRO5;
+		  return PERR_DEFERRED;
+		}
 	}
 
 	dprintf("Crossbar to be applied to all (sender,routed-address) pairs\n");
 
-	{
-	  conscell *tmp;
-	  sender = ncons(e->e_from_trusted);
-	}
+	sender = ncons(e->e_from_trusted);
+
 #if 0
 	if (LIST(sender) && LIST(car(sender)))
 		sender = caar(sender);
@@ -1755,6 +1853,7 @@ sequencer(e, file)
 
 	if (routed_addresses == NULL)	/* they were probably all deferred */ {
 		printf("No routed addresses -> deferred\n");
+		UNGCPRO5;
 		return PERR_DEFERRED;
 	}
 
@@ -1764,7 +1863,8 @@ sequencer(e, file)
 		++idnumber, nxor = 0;
 		for (to = car(l); to != NULL; to = cdr(to)) {
 			conscell *x, *tmp, *errto, *gg;
-			conscell *sender1;
+			conscell *sender1, *z;
+			GCVARS6;
 
 			/* secondlevel is XORs */
 #if 0
@@ -1777,7 +1877,11 @@ sequencer(e, file)
 #endif
 
 			if ((x = crossbar(sender, to)) == NULL)
-				continue;
+			  continue;
+
+			errto = gg = sender1 = tmp = z = NULL;
+			GCPRO6(x, errto, gg, sender1, tmp, z);
+
 
 			if (D_sequencer) {
 			  printf("crossbar returns: ");
@@ -1796,11 +1900,14 @@ sequencer(e, file)
 
 			/* Rewriter level: */
 			for (rwp = rwhead; rwp != NULL; rwp = rwp->next)
-				if (s_equal(rwp->info, tmp))
-					break;
+			  if (s_equal(rwp->info, tmp)) {
+			    break;
+			  }
 			if (rwp == NULL) {
 				rwp = rwalloc(&rwhead);
 				rwp->info  = tmp;	/* rewritings */
+				rwp->errto = NULL;
+				rwmchain = rwmappend(rwmchain,tmp,NULL);
 			}
 			/* else the 'tmp' leaks for a moment ? */
 			
@@ -1816,6 +1923,7 @@ sequencer(e, file)
 				nsp = rwalloc(&rwp->down);
 				nsp->info  = sender1;	/* new sender */
 				nsp->errto = errto;
+				rwmchain = rwmappend(rwmchain,sender1,errto);
 			}
 #if 0
 			else {
@@ -1831,6 +1939,7 @@ sequencer(e, file)
 			rcp->info = tmp;		/* new recipient */
 			rcp->urw.number = idnumber;
 			rcp->errto = errto;
+			rwmchain = rwmappend(rwmchain,tmp,errto);
 #if 0
 			for (rwp = rwhead; rwp != NULL; rwp = rwp->next) {
 				printf("**");
@@ -1853,6 +1962,7 @@ sequencer(e, file)
 				}
 			}
 #endif
+			UNGCPRO6;
 		}
 		if (nxor <= 1) {
 			--idnumber;
@@ -1861,8 +1971,10 @@ sequencer(e, file)
 		}
 	}
 
-	if (deferuid)
-		return PERR_DEFERRED;
+	if (deferuid) {
+	  UNGCPRO5;
+	  return PERR_DEFERRED;
+	}
 
 	isSenderAddr = isRecpntAddr = 0;
 	dprintf("Make sure Date, From, To, are in the header\n");
@@ -1886,11 +1998,15 @@ sequencer(e, file)
 		*hp = NULL;
 	}
  
-	if (deferuid)
+	if (deferuid) {
+	  UNGCPRO5;
 	  return PERR_DEFERRED;
+	}
 
-	if (rwhead == NULL)
+	if (rwhead == NULL) {
+	  UNGCPRO5;
 	  return PERR_NORECIPIENTS;
+	}
 
 	dprintf("Emit specification to the transport system\n");
 #ifdef	USE_ALLOCA
@@ -1905,6 +2021,7 @@ sequencer(e, file)
 		free(ofpname);
 #endif
 		printf("Creation of control file failed\n");
+		UNGCPRO5;
 		return PERR_CTRLFILE;
 	}
 	setvbuf(ofp, vbuf, _IOFBF, sizeof vbuf);
@@ -2067,7 +2184,8 @@ sequencer(e, file)
 			ofperrors |= ferror(ofp);
 			if (ofperrors) break; /* Sigh.. */
 
-			if (!iserrmessage()  &&  nsp->errto != NULL) {
+			if (!iserrmessage() && nsp->errto &&
+			    nsp->errto->string) {
 				/* print envelope sender address */
 				putc(_CF_ERRORADDR, ofp);
 				putc(_CFTAG_NORMAL, ofp);
@@ -2082,6 +2200,7 @@ sequencer(e, file)
 			fprintf(ofp, "%c%c", _CF_SENDER, _CFTAG_NORMAL);
 			fromaddr = prctladdr(nsp->info, ofp, _CF_SENDER, "sender");
 			if (!fromaddr) {
+			  UNGCPRO5;
 			  goto bad_addrdata;
 			}
 			
@@ -2109,6 +2228,7 @@ sequencer(e, file)
 					fprintf(ofp, "%d ", rcp->urw.number);
 				if (! prctladdr(rcp->info, ofp,
 						_CF_RECIPIENT, "recipient")) {
+				  UNGCPRO5;
 				  goto bad_addrdata;
 				}
 				
@@ -2169,6 +2289,8 @@ sequencer(e, file)
 			putc('\n', vfp);
 	}
 
+	UNGCPRO5;
+
 	if (vfp != NULL) {
 		fprintf(vfp, "router done processing %s\n", file);
 		fflush(vfp);
@@ -2226,8 +2348,9 @@ sequencer(e, file)
 	  return PERR_CTRLFILE;
 	}
 
-	rtsyslog(e->e_statbuf.st_mtime, path, fromaddr, smtprelay,
-		 (int) e->e_statbuf.st_size, nrcpts, msgidstr);
+	rtsyslog(e->e_statbuf.st_mtime, (long)e->e_statbuf.st_ino,
+		 fromaddr, smtprelay, (int) e->e_statbuf.st_size,
+		 nrcpts, msgidstr);
 
 #ifndef	USE_ALLOCA
 	free(ofpname);
@@ -2252,7 +2375,7 @@ sequencer(e, file)
 
 static const char *
 prctladdr(info, fp, cfflag, comment)
-	conscell *info;
+	conscell *info; /* No conscell allocs down here */
 	FILE *fp;
 	int cfflag;
 	const char *comment;
@@ -2261,7 +2384,7 @@ prctladdr(info, fp, cfflag, comment)
 	register conscell *l, *x;
 	const char *user = "?user?";
 	const char *channel = NULL;
-	const char *privilege = NULL;
+	const char *privilege = NULL, *p;
 
 	/* We print the quad of  channel/host/user/privilege  information
 	   with this routine, and we return pointer to the user info.
@@ -2314,15 +2437,25 @@ prctladdr(info, fp, cfflag, comment)
 	    }
 	    if (cdr(l))
 	      putc(' ', fp);
-	  } else if (strcmp(channel,"error")!=0)
+	  } else if (channel && strcmp(channel,"error")!=0)
 	    fprintf(stderr, "Malformed %s\n", comment);
 	}
 	if ((cfflag == _CF_SENDER) && channel && strcmp(channel,"error") == 0)
 		user = ""; /* error channel source address -> no user! */
-	if (!privilege || !('0' <= *privilege && *privilege <= '9')) {
-	  fprintf(stderr, "Malformed %s privilege data!\n", comment);
+
+	if (!privilege) {
+	  fprintf(stderr, "Malformed (missing) %s privilege data!\n", comment);
 	  return NULL;
 	}
+	p = privilege;
+	if (*p == '-') ++p;
+	while ('0' <= *p && *p <= '9') ++p;
+	if (*p) {
+	  fprintf(stderr, "Malformed ('%s') %s privilege data!\n",
+		  privilege, comment);
+	  return NULL;
+	}
+
 	return user;
 }
 
@@ -2334,7 +2467,7 @@ prdsndata(info, fp, cfflag, comment)
 	const char *comment;
 {
 	int i = 0;
-	register conscell *l, *x = NULL;
+	register conscell *l, *x = NULL; /* No allocs down here */
 
 	for (l = car(info); l != NULL; l = cdr(l)) {
 	  ++i;
@@ -2362,7 +2495,7 @@ prdsndata(info, fp, cfflag, comment)
 
 static conscell *
 find_errto(info)
-conscell *info;
+     conscell *info;	/* No allocs under here */
 {
 	register conscell *x = NULL;
 

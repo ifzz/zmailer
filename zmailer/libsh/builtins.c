@@ -59,9 +59,7 @@ static conscell *sh_length	CSARGS2;
 static conscell *sh_last	CSARGS2;
 static conscell *sh_lappend     CSARGS2;
 static conscell *sh_lreplace    CSARGS2;
-#ifdef CONSCELL_PREV
-static conscell *sh_setf	CSARGS2;
-#endif
+extern conscell *sh_glob	CSARGS2; /* expand.c */
 
 #define CSARGV2 __((int argc, const char *argv[]))
 
@@ -95,9 +93,6 @@ struct shCmd builtins[] = {
 {	"list",		NULL,	sh_list,	NULL,	SH_ARGV		},
 {	"grind",	NULL,	sh_grind,	NULL,	SH_ARGV		},
 {	"elements",	NULL,	sh_elements,	NULL,	SH_ARGV		},
-#ifdef CONSCELL_PREV
-{	"setf",		NULL,	sh_setf,	NULL,	SH_ARGV		},
-#endif
 {	"get",		NULL,	sh_get,		NULL,	SH_ARGV		},
 {	"length",	NULL,	sh_length,	NULL,	SH_ARGV		},
 {	"[",		sh_test,	NULL,	NULL,	0		},
@@ -130,28 +125,23 @@ struct shCmd builtins[] = {
 {	"false",	sh_false,	NULL,	NULL,	0		},
 {	"lappend",	NULL,	sh_lappend,	NULL,	SH_ARGV		},
 {	"lreplace",	NULL,	sh_lreplace,	NULL,	SH_ARGV		},
+{	"glob",		NULL,	sh_glob,	NULL,	SH_ARGV		},
 {	NULL,		NULL,		NULL,	NULL,	0		},
 };
 
 conscell *
 sh_car(avl, il)
-	conscell *avl, *il;
+	conscell *avl, *il; /* Input conscells are gc-protected! */
 {
-	conscell *tmp;
-
 	il = cdar(avl);
 	if (il == NULL)
 		return NULL;
-	if (STRING(il))
-		return conststring(il->string);
-	/* setf preparation */
+	if (STRING(il)) {
+		il = copycell(il);
+		cdr(il) = NULL;
+		return il;
+	}
 	if (car(il) == NULL) {
-#ifdef CONSCELL_PREV
-		if (il->prev) {
-			il->prev = cdr(il->prev);
-			il->pflags = 0;
-		}
-#endif
 		return il;
 	}
 	car(il) = copycell(car(il));	/* don't modify malloc'ed memory! */
@@ -161,52 +151,30 @@ sh_car(avl, il)
 
 static conscell *
 sh_cdr(avl, il)
-	conscell *avl, *il;
+	conscell *avl, *il; /* Input conscells are gc-protected! */
 {
 	il = cdar(avl);
 	if (il == NULL || STRING(il) || car(il) == NULL)
 		return NULL;
-#ifdef CONSCELL_PREV
-	/* setf preparation */
-	if (cdar(il)) {
-		il->prev = cdar(il)->prev;
-	} else if (car(il)->prev) {
-		if (car(il)->pflags)
-			il->prev = cdr(car(il)->prev);
-		else
-			il->prev = car(car(il)->prev);
-	}
-	il->pflags = 3;
-#endif
 	car(il) = cdar(il);
 	return il;
 }
 
 static conscell *
 sh_last(avl, il)
-	conscell *avl, *il;
+	conscell *avl, *il; /* Input conscells are gc-protected! */
 {
 	il = cdar(avl);
 	if (il == NULL || STRING(il) || car(il) == NULL)
 		return NULL;
-	/* setf preparation */
 	while (cdar(il) != NULL)
 		car(il) = cdar(il);
-#ifdef CONSCELL_PREV
-	if (car(il)->prev) {
-		/* if (car(il)->pflags)*/
-			il->prev = car(il)->prev;
-		/*else
-			il->prev = car(car(il)->prev);*/
-	}
-	il->pflags = 3;
-#endif
 	return il;
 }
 
 static conscell *
 sh_list(avl, il)
-	conscell *avl, *il;
+	conscell *avl, *il; /* Input conscells are gc-protected! */
 {
 	car(avl) = cdar(avl);
 	return avl;
@@ -214,101 +182,28 @@ sh_list(avl, il)
 
 static conscell *
 sh_grind(avl, il)
-	conscell *avl, *il;
+	conscell *avl, *il; /* Input conscells are gc-protected! */
 {
 	return cdar(avl);
 }
 
 static conscell *
 sh_elements(avl, il)
-	conscell *avl, *il;
+	conscell *avl, *il; /* Input conscells are gc-protected! */
 {
 	conscell *p;
 
 	if ((p = cdar(avl)) == NULL || !LIST(p))
 		return p;
-	for (il = cadar(avl); il != NULL; il = cdr(il))
-		il->flags |= ELEMENT;
-	return cadar(avl);
+	il = cadar(avl);
+
+	il = s_copy_chain(il); /* Creates new cells, but this is
+				  also last call to the creator here. */
+
+	for (p = il; p != NULL; p = cdr(p))
+		p->flags |= ELEMENT;
+	return il;
 }
-
-#ifdef CONSCELL_PREV
-
-static conscell *
-sh_setf(avl, il)
-	conscell *avl, *il;
-{
-	conscell *place, *value, *tmp = NULL;
-	memtypes oval = stickymem;
-
-	/*
-	 * The `place' argument to setf should NOT be malloc'ed stuff,
-	 * minor tweaks may be necessary in car/cdr/get (certainly the latter)
-	 * to ensure this.
-	 */
-	if ((place = cdar(avl)) == NULL) {
-		fprintf(stderr, "Usage: %s variable-reference [new-value]\n",
-				car(avl)->string);
-		return NULL;
-	}
-	value = cddar(avl);
-
-	if (place->prev == NULL)
-		return value;
-
-	stickymem = MEM_MALLOC;
-
-	value = s_copy_tree(value);
-	if (place->pflags) {
-		if (value != NULL && (place->pflags & 02)) {
-			if (LIST(value)) {
-				tmp = car(value);
-				free((char *)value);
-				value = tmp;
-			}
-			place->pflags &= ~02;
-		}
-		if (place->pflags & 04) {
-			if ((tmp = cdr(place->prev))) {
-				tmp = cdr(tmp);
-				if (value != NULL) {
-					cddr(place->prev) = NULL;
-					s_free_tree(cdr(place->prev));
-				}
-			}
-		} else {
-			if (cdr(place->prev) != NULL)
-				s_free_tree(cdr(place->prev));
-			cdr(place->prev) = NULL;
-		}
-		if (value != NULL) {
-			cdr(place->prev) = value;
-			s_set_prev(place->prev, value);
-			value->pflags = 1;
-			if (place->pflags & 04) {
-				value = s_last(value);
-				if (cdr(value))
-					s_free_tree(cdr(value));	/* XX */
-				cdr(value) = tmp;
-			}
-		}
-	} else {
-		if (value != NULL && car(place->prev) != NULL) {
-			if (cdar(place->prev))
-				cdr(s_last(value)) = cdar(place->prev);
-			cdar(place->prev) = NULL; /* for free() below */
-		}
-		s_free_tree(car(place->prev));
-		car(place->prev) = value;
-		s_set_prev(place->prev, value);
-	}
-	stickymem = oval;
-#ifdef	MAILER
-	v_touched();
-#endif	/* MAILER */
-	return cddar(avl);
-}
-#endif
 
 
 /*
@@ -320,7 +215,7 @@ sh_setf(avl, il)
 
 static conscell *
 sh_lappend(avl, il)
-	conscell *avl, *il;
+	conscell *avl, *il; /* Input conscells are gc-protected! */
 {
 	conscell *key, *d, *tmp, *data;
 	memtypes omem = stickymem;
@@ -332,7 +227,7 @@ sh_lappend(avl, il)
 				car(avl)->string);
 		return NULL;
 	}
-	d = v_find(key->string);
+	d = v_find(key->string); /* no new objects allocated */
 	if (!d) return NULL;
 
 	d = cdr(d); /* This is variable content pointing object */
@@ -342,7 +237,7 @@ sh_lappend(avl, il)
 	tmp = cdr(key); /* data is the next elt after the variable name */
 	if (LIST(tmp))  /* If it is a LIST object, descend into it */
 	  tmp = car(tmp);
-	data = s_copy_tree(tmp);
+	data = s_copy_chain(tmp); /* The only cell-allocator in here */
 
 	if (car(d) != NULL) {
 	  d = car(d);
@@ -379,8 +274,10 @@ sh_lreplace(avl, il)
 {
 	conscell *key, *d, *tmp, *data, **dp;
 	memtypes omem = stickymem;
-	int fieldidx;
+	int fieldidx, fieldnamelen;
 	char *fieldname;
+
+	GCVARS4;
 
 	const char *lreplace_usage =
 	  "Usage: %s variable-name fieldidx $new_value\n\
@@ -400,7 +297,7 @@ sh_lreplace(avl, il)
 	}
 
 	tmp = cdr(key);  /* Numeric value for field index */
-	if (!STRING(tmp)) {
+	if (!tmp || !STRING(tmp)) {
 		fprintf(stderr, lreplace_usage, car(avl)->string);
 		return NULL;
 	}
@@ -412,8 +309,10 @@ sh_lreplace(avl, il)
 	    return NULL;
 	  }
 	  fieldname = NULL;
+	  fieldnamelen = 0;
 	} else {
-	  fieldname = tmp->string;
+	  fieldname    = tmp->string;
+	  fieldnamelen = tmp->slen;
 	}
 
 	stickymem = MEM_MALLOC;
@@ -423,14 +322,19 @@ sh_lreplace(avl, il)
 	if (LIST(tmp))  /* If it is a LIST object, descend into it */
 	  tmp = car(tmp);
 #endif
-	data = s_copy_tree(tmp);
+
+	data = NULL;
+	GCPRO4(data, tmp, d, key);
+
+	data = s_copy_chain(tmp);
 
 	dp = &car(cdr(d)); /* This is variable pointing object */
 	d = *dp;
 	if (fieldname) {
 	  while (d != NULL) {
 	    /* Ok, this is key/value pairs in a linear list */
-	    if (STRING(d) && strcmp(d->string,fieldname)==0) {
+	    if (STRING(d) && fieldnamelen == d->slen &&
+		memcmp(d->string,fieldname,fieldnamelen)==0) {
 	      /* Move pointers to the value */
 	      dp = &cdr(d);
 	      d = *dp;
@@ -445,7 +349,8 @@ sh_lreplace(avl, il)
 	  }
 	  if (d == NULL) {
 	    /* Append the pair */
-	    d = newstring(strsave(fieldname));
+	    int slen = fieldnamelen;
+	    d = newstring(dupnstr(fieldname,slen),slen);
 	    *dp = d;
 	    dp = &cdr(d);
 	    d = NULL;
@@ -461,8 +366,10 @@ sh_lreplace(avl, il)
 	if (d) {
 	  cdr(data) = cdr(d);
 	  cdr(d) = NULL;	/* Disconnect and discard old data */
-	  s_free_tree(d);
+	  /* s_free_tree(d); -- GC cleans it out latter .. */
 	}
+
+	UNGCPRO4;
 
 	stickymem = omem;
 	return NULL; /* Be quiet, don't force the caller
@@ -476,7 +383,8 @@ static conscell *
 sh_get(avl, il)
 	conscell *avl, *il;
 {
-	conscell *plist, *key, *d, *tmp;
+	conscell *plist, *key, *d = NULL;
+	GCVARS3;
 
 	if ((plist = cdar(avl)) == NULL
 	    || (key = cddar(avl)) == NULL
@@ -489,15 +397,15 @@ sh_get(avl, il)
 		d = v_find((const char *)plist->string);
 		if (d == NULL) {
 			/* (setq plist '(key nil)) */
-			d = conststring(key->string);
+			GCPRO3(avl,plist,d);
+			if (ISCONST(key))
+			  d = conststring(key->string, key->slen);
+			else
+			  d = copycell(key);
 			cdr(d) = NIL;
 			d = ncons(d);
 			assign(plist, d, (struct osCmd *)NULL);
-#ifdef CONSCELL_PREV
-			/* setf preparation */
-			cdar(d)->prev = cadr(v_find((const char*)plist->string));
-			cdar(d)->pflags = 1;
-#endif
+			UNGCPRO3;
 			return cdar(d);
 		}
 		plist = cdr(d);
@@ -512,11 +420,8 @@ sh_get(avl, il)
 			printf("comparing '%s' and '%s'\n",
 				d->string, key->string);	*/
 		if (STRING(d) && strcmp(d->string, key->string) == 0) {
-			d = copycell(cdr(d));
+			d = copycell(cdr(d)); /* This input is plist elt */
 			cdr(d) = NULL;
-#ifdef CONSCELL_PREV
-			d->pflags |= 04;
-#endif
 			return d;
 		}
 		d = cdr(d);
@@ -535,18 +440,8 @@ sh_get(avl, il)
 		cddr(plist) = d;
 
 		stickymem = MEM_MALLOC;
-		cdr(plist) = s_copy_tree(cdr(plist));
-#ifdef CONSCELL_PREV
-		s_set_prev(plist, cdr(plist));
-		cdr(plist)->pflags = 1;
-#endif
+		cdr(plist) = s_copy_chain(cdr(plist)); /* input gc-protected */
 		stickymem = oval;
-
-#ifdef CONSCELL_PREV
-		/* setf preparation */
-		d->prev = cdr(plist);
-		d->pflags = 01 | 04;
-#endif
 	}
 
 	return d;
@@ -557,7 +452,6 @@ sh_length(avl, il)
 	conscell *avl, *il;
 {
 	char buf[10];
-	conscell *tmp;
 	int len = 0;
 
 	if ((il = cdar(avl)) && LIST(il)) {
@@ -565,8 +459,9 @@ sh_length(avl, il)
 			++len;
 	}
 	sprintf(buf, "%d", len);
+	len = strlen(buf);
 
-	avl = newstring(strsave(buf));
+	avl = newstring(dupnstr(buf,len),len);
 	return avl;
 }
 
@@ -1002,8 +897,8 @@ sh_export(argc, argv)
 		if (LIST(elist) || elist->string == NULL)
 			continue;
 		for (glist = car(scope); glist != NULL; glist = cddr(glist)) {
-			if (STRING(glist) &&
-			    strcmp(glist->string, elist->string) == 0)
+			if (STRING(glist) && glist->slen == elist->slen &&
+			    memcmp(glist->string, elist->string, elist->slen) == 0)
 				break;
 		}
 		if (glist == NULL)
@@ -1114,7 +1009,7 @@ sh_set(argc, argv)
 	memtypes oval;
 	const char *cp;
 	char **kk, *ep;
-	conscell *d, *pd = NULL, *scope, *tmp;
+	conscell *d, *pd = NULL, *scope;
 	char ebuf[32];
 
 	if (argc == 1) {
@@ -1128,7 +1023,7 @@ sh_set(argc, argv)
 #ifdef	USE_ALLOCA
 		kk = (char **)alloca((n+1) * sizeof (char *));
 #else
-		kk = (char **)tmalloc((n+1) * sizeof (char *));
+		kk = (char **)emalloc((n+1) * sizeof (char *));
 #endif
 		kk[0] = NULL;
 		/* iterate through all variables */
@@ -1148,7 +1043,9 @@ sh_set(argc, argv)
 					putchar('\n');
 				}
 			}
-		/* free(kk); -- tmalloc() on temp memory makes this unnecessary */
+#ifndef USE_ALLOCA
+		free(kk);
+#endif
 		return 0;
 	}
 	--argc, ++argv;
@@ -1195,9 +1092,10 @@ sh_set(argc, argv)
 	stickymem = MEM_MALLOC;
 	if (globalcaller != NULL && globalcaller->argv != NULL)
 		pd = car(globalcaller->argv);
-	/* XX: possible memory leak here! */
 	while (argc-- > 0) {
-		d = newstring(strsave(*argv));
+		int slen = strlen(*argv);
+		d = newstring(dupnstr(*argv,slen),slen);
+		/* These go into  globalcaller->  protected storage */
 		if (pd != NULL)
 			cdr(pd) = d;
 		++argv;
@@ -1246,7 +1144,7 @@ sh_unset(argc, argv)
 				else
 					cddr(pd) = next;
 				cddr(d) = NULL;
-				s_free_tree(d);
+				/* s_free_tree(d); -- GC does it.. */ 
 				/* no point doing anything else in this scope */
 				break;
 			}

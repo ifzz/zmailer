@@ -36,11 +36,11 @@ extern int freeze;
 extern int mailqmode;
 
 static int  scheduler_nofiles = -1; /* Will be filled below */
-static int  runcommand __((const char **, struct vertex *, struct web *, struct web*));
-static void stashprocess __((int, int, int, struct web*, struct web*, struct vertex *, const char *argv[]));
-static void reclaim __((int, int));
+static int  runcommand   __((char * const argv[], char * const env[], struct vertex *, struct web *, struct web*));
+static void stashprocess __((int, int, int, struct web*, struct web*, struct vertex *, char * const argv[]));
+static void reclaim      __((int, int));
 static void waitandclose __((int));
-static void readfrom __((int));
+static void readfrom     __((int));
 
 static struct mailq *mq2root  = NULL;
 static int           mq2count = 0;
@@ -180,13 +180,33 @@ struct procinfo *proc;
 	return 0;
 }
 
+static void cmdbufalloc __((int, char **, int *));
+
+static void
+cmdbufalloc(newlen, bufp, spcp)
+     int newlen;
+     char **bufp;
+     int *spcp;
+{
+  if (*bufp == NULL) {
+    *bufp = emalloc(newlen+1);
+    *spcp = newlen;
+  }
+  if (newlen > *spcp) {
+    *bufp = erealloc(*bufp, newlen+1);
+    *spcp = newlen;
+  }
+}
+
 void
 feed_child(proc)
 struct procinfo *proc;
 {
 	struct vertex *vtx;
-	int len, rc;
-	char cmdbuf[500];
+	int rc;
+	static char *cmdbuf = NULL;
+	static int cmdbufspc = 0;
+	int cmdlen;
 
 	if (proc->thread == NULL) {
 	  return; /* Might be called without next process.. */
@@ -213,34 +233,48 @@ struct procinfo *proc;
 	if (vtx->wakeup > now)
 	  return; /* No, not yet! */
 
-	if (slow_shutdown)
+	if (slow_shutdown) {
+	  cmdlen = 1;
+	  cmdbufalloc(cmdlen, &cmdbuf, &cmdbufspc);
 	  strcpy(cmdbuf,"\n");
-	else if (vtx->cfp->dirind > 0) {
+	} else if (vtx->cfp->dirind > 0) {
 	  const char *d = cfpdirname(vtx->cfp->dirind);
-	  if (proc->thg->withhost)
+	  if (proc->thg->withhost) { /* cmd-line was with host */
+	    cmdlen = 2 + strlen(d) + strlen(vtx->cfp->mid);
+	    cmdbufalloc(cmdlen, &cmdbuf, &cmdbufspc);
 	    sprintf(cmdbuf, "%s/%s\n", d, vtx->cfp->mid);
-	  else
+	  } else {
+	    cmdlen = 3+strlen(d)+strlen(vtx->cfp->mid)+strlen(proc->ho->name);
+	    cmdbufalloc(cmdlen, &cmdbuf, &cmdbufspc);
 	    sprintf(cmdbuf, "%s/%s\t%s\n", d, vtx->cfp->mid, proc->ho->name);
+	  }
 	} else {
-	  if (proc->thg->withhost)
+	  if (proc->thg->withhost) { /* cmd-line was with host */
+	    cmdlen = 1 + strlen(vtx->cfp->mid);
+	    cmdbufalloc(cmdlen, &cmdbuf, &cmdbufspc);
 	    sprintf(cmdbuf, "%s\n", vtx->cfp->mid);
-	  else
+	  } else {
+	    cmdlen = 2+strlen(vtx->cfp->mid)+strlen(proc->ho->name);
+	    cmdbufalloc(cmdlen, &cmdbuf, &cmdbufspc);
 	    sprintf(cmdbuf, "%s\t%s\n", vtx->cfp->mid, proc->ho->name);
+	  }
 	}
 
-	len = strlen(cmdbuf);
-
-	if (len >= (sizeof(proc->cmdbuf) - proc->cmdlen)) {
+	if (cmdlen >= (proc->cmdspc - proc->cmdlen)) {
 	  /* Does not fit there, flush it! */
 	  rc = flush_child(proc);
-	  if (len >= (sizeof(proc->cmdbuf) - proc->cmdlen)) {
+	  if (proc->cmdlen == 0 && cmdlen >= proc->cmdspc) {
+	    /* Wow, this command is bigger than that buffer! */
+	    cmdbufalloc(cmdlen+1, &proc->cmdbuf, &proc->cmdspc);
+	  }
+	  if (cmdlen >= (proc->cmdspc - proc->cmdlen)) {
 	    /* STILL does not fit there, come back latter.. */
 	    return;
 	  }
 	}
 	/* Ok, it does fit in, copy it there.. */
-	memcpy(proc->cmdbuf+proc->cmdlen,cmdbuf, len+1);
-	proc->cmdlen += len;
+	memcpy(proc->cmdbuf+proc->cmdlen,cmdbuf, cmdlen+1);
+	proc->cmdlen += cmdlen;
 
 	if (verbose) {
 	  printf("feed: tofd=%d, fed=%d, chan=%s, proc=0x%p, vtx=0x%p, ",
@@ -257,7 +291,7 @@ struct procinfo *proc;
 	proc->fed = 1;
 
 	if (verbose)
-	  printf("len=%d buf=%s", len, cmdbuf);
+	  printf("len=%d buf=%s", cmdlen, cmdbuf);
 
 	proc->feedtime = now;
 	if (vtx)
@@ -274,8 +308,12 @@ start_child(vhead, chwp, howp)
 	struct vertex *vhead;
 	struct web *chwp, *howp;
 {
-	char	*av[30], *s, *os, *cp, *ocp, buf[MAXPATHLEN];
-	int	i;
+#define MAXARGC 40
+	char *av[1+MAXARGC], *ev[1+MAXARGC], *s, *os, *cp, *ocp;
+	char buf[MAXPATHLEN*4];
+	char buf2[MAXPATHLEN];
+
+	int	 i, avi, evi;
 	static time_t prev_time = 0;
 	static int startcnt = 0; /* How many childs per second (time_t tick..) ? */
 	time_t this_time;
@@ -308,11 +346,12 @@ start_child(vhead, chwp, howp)
 	 * (also any ${ZENV} variable)
 	 */
 	os = buf;
+	avi = evi = 0;
 	for (i = 0; vhead->thgrp->ce.argv[i] != NULL; ++i) {
 	  if (strcmp(vhead->thgrp->ce.argv[i], replhost) == 0) {
-	    av[i] = howp->name;
+	    av[avi] = howp->name;
 	  } else if (strcmp(vhead->thgrp->ce.argv[i], replchannel) == 0) {
-	    av[i] = chwp->name;
+	    av[avi] = chwp->name;
 	  } else if (strchr(vhead->thgrp->ce.argv[i], '$') != NULL) {
 	    s = os;
 	    for (cp = vhead->thgrp->ce.argv[i]; *cp != '\0'; ++cp) {
@@ -327,8 +366,11 @@ start_child(vhead, chwp, howp)
 		    strcpy(s,howp->name);
 		  } else if (strcmp(ocp,"channel")==0) {
 		    strcpy(s,chwp->name);
-		  } else
-		    strcpy(s, getzenv(ocp));
+		  } else {
+		    char *t = getzenv(ocp);
+		    if (t)
+		      strcpy(s, t);
+		  }
 		  s += strlen(s);
 		  *cp = '}';
 		} else
@@ -337,25 +379,61 @@ start_child(vhead, chwp, howp)
 		*s++ = *cp;
 	    }
 	    *s = '\0';
-	    av[i] = os;
+	    av[avi] = os;
 	    os = s + 1;
 	  } else
-	    av[i] = vhead->thgrp->ce.argv[i];
+	    av[avi] = vhead->thgrp->ce.argv[i];
+
+	  if (os >= (buf+sizeof(buf))) {
+	    fprintf(stderr,"BUFFER OVERFLOW IN ARGV[] SUBSTITUTIONS!\n");
+	    abort();
+	  }
+
+	  if (avi == 0 && strchr(av[0],'=') != NULL) {
+	    ev[evi] = av[0];
+	    ++evi;
+	  } else if (avi == 0 && av[0][0] != '/') {
+	    /* Must add ${MAILBIN}/ta/ to be the prefix.. */
+
+	    static char *mailbin = NULL;
+
+	    if (!mailbin) mailbin = getzenv("MAILBIN");
+	    if (!mailbin) mailbin = MAILBIN;
+
+	    sprintf(buf2,"%s/%s/%s", mailbin, qdefaultdir, av[0]);
+	    av[avi++] = buf2;
+	    if (strlen(buf2) > sizeof(buf2)) {
+	      /* Buffer overflow ! This should not happen, but ... */
+	      fprintf(stderr,"BUFFER OVERFLOW IN ARGV[0] CONSTRUCTION!\n");
+	      abort();
+	    }
+	  } else
+	    ++avi;
+	  if (avi >= MAXARGC) avi = MAXARGC;
+	  if (evi >= MAXARGC) evi = MAXARGC;
 	}
-	av[i] = NULL;
+	av[avi] = NULL;
+	if ((s = getenv("TZ")))       ev[evi++] = s; /* Pass the TZ      */
+	if ((s = getzenv("PATH")))    ev[evi++] = s; /* Pass the PATH    */
+	if ((s = getzenv("ZCONFIG"))) ev[evi++] = s; /* Pass the ZCONFIG */
+	ev[evi] = NULL;
 
 	/* fork off the appropriate command with the appropriate stdin */
 	if (verbose) {
-	  printf("$");
-	  for (i = 0; av[i] != NULL; ++i)
+	  printf("${ ");
+	  for (i = 0; ev[i] != NULL; ++i)
+	    printf(" %s", ev[i]);
+	  printf(" }");
+	  for (i = 0; ev[i] != NULL; ++i)
 	    printf(" %s", av[i]);
 	  printf("\n");
 	}
-	return runcommand((const char **)av, vhead, chwp, howp);
+	return runcommand(av, ev, vhead, chwp, howp);
 }
 
-static int runcommand(argv, vhead, chwp, howp)
-	const char *argv[];
+static int runcommand(argv, env, vhead, chwp, howp)
+	char * const argv[];
+	char * const env[];
 	struct vertex *vhead;
 	struct web *chwp, *howp;
 {
@@ -366,7 +444,7 @@ static int runcommand(argv, vhead, chwp, howp)
 
 	uid = vhead->thgrp->ce.uid;
 	gid = vhead->thgrp->ce.gid;
-	cmd = vhead->thgrp->ce.command;
+	cmd = argv[0];
 	prio= vhead->thgrp->ce.priority;
 
 	if (pipes_create(to,from) < 0) return 0;
@@ -403,7 +481,7 @@ static int runcommand(argv, vhead, chwp, howp)
 	  resources_limit_nofiles(transportmaxnofiles);
 	  setgid(gid);	/* Do GID setup while still UID 0..   */
 	  setuid(uid);	/* Now discard all excessive powers.. */
-	  execv(cmd, (char**)argv);
+	  execve(cmd, argv, env);
 	  fprintf(stderr, "Exec of %s failed!\n", cmd);
 	  _exit(1);
 	} else if (pid < 0) {	/* fork failed - yell and forget it */
@@ -428,7 +506,7 @@ static void stashprocess(pid, fromfd, tofd, chwp, howp, vhead, argv)
 	int pid, fromfd, tofd;
 	struct web *chwp, *howp;
 	struct vertex *vhead;
-	const char *argv[];
+	char * const argv[];
 {
 	int i, l, j;
 	struct procinfo *proc;
@@ -442,6 +520,11 @@ static void stashprocess(pid, fromfd, tofd, chwp, howp, vhead, argv)
 	  memset(cpids, 0, sizeof(struct procinfo) * i);
 	}
 	proc = &cpids[fromfd];
+
+	/* Free these buffers in case they exist from last use.. */
+	if (proc->cmdbuf)  free(proc->cmdbuf);
+	if (proc->cmdline) free(proc->cmdline);
+
 	memset(proc,0,sizeof(struct procinfo));
 #if 0 /* the memset() does this more efficiently.. */
 	proc->next   = NULL;
@@ -468,6 +551,10 @@ static void stashprocess(pid, fromfd, tofd, chwp, howp, vhead, argv)
 	mytime(&proc->hungertime); /* Actually it is not yet 'hungry' as
 				      per reporting so, but we store the
 				      time-stamp anyway */
+
+	cmdbufalloc(2000, &proc->cmdbuf, &proc->cmdspc);
+	cmdbufalloc(200, &proc->cmdline, &proc->cmdlspc);
+
 	fd_nonblockingmode(fromfd);
 	if (fromfd != tofd)
 	  fd_nonblockingmode(tofd);
@@ -482,15 +569,9 @@ static void stashprocess(pid, fromfd, tofd, chwp, howp, vhead, argv)
 	  if (i > 0)
 	    proc->cmdline[l++] = ' ';
 	  j = strlen(argv[i]);
-	  if (l + j < (sizeof(proc->cmdline) - 2)) {
-	    memcpy(proc->cmdline+l, argv[i], j);
-	    l += j;
-	  } else {
-	    /* All will not fit in, we cut.. */
-	    j = sizeof(proc->cmdline) - 2 - l;
-	    memcpy(proc->cmdline + l, argv[i], j);
-	    break;
-	  }
+	  cmdbufalloc(l+j+1, &proc->cmdline, &proc->cmdlspc);
+	  memcpy(proc->cmdline+l, argv[i], j);
+	  l += j;
 	}
 	proc->cmdline[l] = '\0';
 
