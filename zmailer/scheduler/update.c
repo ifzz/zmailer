@@ -257,12 +257,12 @@ unctlfile(cfp, no_unlink)
 	  reporterrs(cfp);
 
 	  if (do_syslog) {
-	    char taspid[30],fnam[30];
-	    sprintf(fnam,"%lu",(long)cfp->id);
-	    taspoolid(taspid, sizeof(taspid), cfp->ctime, fnam);
+	    char taspid[30];
+	    taspoolid(taspid, cfp->mtime, (long)cfp->id);
 	    zsyslog((LOG_INFO, "%s: complete (total %d recepients, %d failed)",
 		     taspid, cfp->rcpnts_total, cfp->rcpnts_failed));
 	  }
+	  ++MIBMtaEntry->mtaTransmittedMessagesSc;
 
 	  eunlink(path);
 	  if (verbose)
@@ -290,7 +290,7 @@ unctlfile(cfp, no_unlink)
 #if 0
 	  /* We will LOOSE this from the schedules -- add info about
 	     it into the indirscanqueue -- at the tail... */
-	  dq_insert(NULL, atol(cfp->mid), path, 30);
+	  dq_insert(NULL, cfp->id, path, 30);
 #endif
 	}
 
@@ -303,7 +303,6 @@ unctlfile(cfp, no_unlink)
 
 	--global_wrkcnt;
 	--MIBMtaEntry->mtaStoredMessages;
-
 	free_cfp_memory(cfp);
 }
 
@@ -520,9 +519,11 @@ deletemsg(msgid, curcfp)
 	 * this strange way of doing the unlink.
 	 */
 	while (cfp->head->next[L_CTLFILE] != NULL) {
+	  MIBMtaEntry->mtaStoredRecipients -= cfp->head->ngroup;
 	  cfp->head->ngroup = 0;
 	  unvertex(cfp->head,0,1);
 	}
+	MIBMtaEntry->mtaStoredRecipients -= cfp->head->ngroup;
 	cfp->head->ngroup = 0;
 	unvertex(cfp->head,0,1);
 }
@@ -622,6 +623,9 @@ static void vtxupdate(vp, index, ok)
 	  if (vp->index[i] == index) {
 	    /* remove us from the vertex indices */
 	    vp->ngroup -= 1;
+
+	    --MIBMtaEntry->mtaStoredRecipients;
+
 	    /* compact the index array */
 	    for (++i; i <= vp->ngroup; ++i)
 	      vp->index[i-1] = vp->index[i];
@@ -641,8 +645,8 @@ static void logstat(fp,vp,reason)
 {
 	mytime(&now);
 	fprintf(fp,"%ld %s %ld %ld %s %s/%s\n",
-		(long)vp->cfp->ctime, vp->cfp->mid,
-		(long)(vp->cfp->envctime - vp->cfp->ctime),
+		(long)vp->cfp->mtime, vp->cfp->mid,
+		(long)(vp->cfp->envctime - vp->cfp->mtime),
 		(long)(now - vp->cfp->envctime), reason,
 		vp->orig[L_CHANNEL]->name,vp->orig[L_HOST]->name);
 	fflush(fp);
@@ -673,6 +677,7 @@ static void expaux(vp, index, buf)
 
 	/* Delete this vertex from scheduling datasets */
 	vtxupdate(vp, index, 0);
+	++MIBMtaEntry->mtaTransmittedRecipientsSc;
 }
 
 void
@@ -691,13 +696,13 @@ expire(vp, index)
 		  "failed",
 		  "5.4.7 (unspecified timeout failure)",
 		  "smtp; 500 (Expired after ");
-	  saytime((u_long)(vp->ce_expiry - vp->cfp->ctime), buf, 0);
+	  saytime((u_long)(vp->ce_expiry - vp->cfp->mtime), buf, 0);
 	  strcat(buf,")\001");
 	  vp->notary = strsave(buf);
 	}
 
 	strcpy(buf, "expired after ");
-	saytime((u_long)(vp->ce_expiry - vp->cfp->ctime), buf, 0);
+	saytime((u_long)(vp->ce_expiry - vp->cfp->mtime), buf, 0);
 
 	if (vp->message != NULL && *(vp->message) != '\0') {
 	  emsg = emalloc(strlen(buf) + strlen(vp->message) + strlen(fmt));
@@ -747,7 +752,7 @@ static int u_ok(vp, index, inum, offset, notary, message)
 
 	/* Delete this vertex from scheduling datasets */
 	vtxupdate(vp, index, 1);
-	++MIBMtaEntry->mtaTransmittedRecipients;
+	++MIBMtaEntry->mtaTransmittedRecipientsSc;
 	return 1;
 }
 
@@ -777,7 +782,7 @@ static int u_ok2(vp, index, inum, offset, notary, message)
 
 	/* Delete this vertex from scheduling datasets */
 	vtxupdate(vp, index, 1);
-	++MIBMtaEntry->mtaTransmittedRecipients;
+	++MIBMtaEntry->mtaTransmittedRecipientsSc;
 	return 1;
 }
 
@@ -806,7 +811,7 @@ static int u_ok3(vp, index, inum, offset, notary, message)
 
 	/* Delete this vertex from scheduling datasets */
 	vtxupdate(vp, index, 1);
-	++MIBMtaEntry->mtaTransmittedRecipients;
+	++MIBMtaEntry->mtaTransmittedRecipientsSc;
 	return 1;
 }
 
@@ -871,6 +876,7 @@ static int u_error(vp, index, inum, offset, notary, message)
 
 	/* Delete this vertex from scheduling datasets */
 	vtxupdate(vp, index, 0);
+	++MIBMtaEntry->mtaTransmittedRecipientsSc;
 	return 1;
 }
 
@@ -903,6 +909,7 @@ static int u_error2(vp, index, inum, offset, notary, message)
 
 	/* Delete this vertex from scheduling datasets */
 	vtxupdate(vp, index, 0);
+	++MIBMtaEntry->mtaTransmittedRecipientsSc;
 	return 1;
 }
 

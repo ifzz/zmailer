@@ -26,7 +26,7 @@
 #undef datum
 #endif
 #ifdef HAVE_DB_H
-#ifdef HAVE_DB_185_H
+#if defined(HAVE_DB_185_H) && !defined(HAVE_DB_OPEN2)
 # include <db_185.h>
 #else
 # include <db.h>
@@ -151,12 +151,23 @@ static int store_db(dbf, typ, overwritemode, linenum, t, tlen, s, slen)
 #ifdef HAVE_DB_H
 	if (typ == 3 || typ == 4) {
 		DBT Bkey, Bdat;
+
+		memset(&Bkey,0,sizeof(Bkey));
+		memset(&Bdat,0,sizeof(Bdat));
+
 		Bkey.data = (void*)t;
 		Bkey.size = tlen;
+
 		Bdat.data = (void*)s;
 		Bdat.size = slen;
+
+#ifdef HAVE_DB_OPEN2
+		rc = (dbfile->put) (dbfile, NULL, &Bkey, &Bdat,
+				    overwritemode ? 0: DB_NOOVERWRITE);
+#else
 		rc = (dbfile->put) (dbfile, &Bkey, &Bdat,
 				    overwritemode ? 0: R_NOOVERWRITE);
+#endif
 	}
 #endif
 
@@ -195,9 +206,17 @@ static int store_db(dbf, typ, overwritemode, linenum, t, tlen, s, slen)
 #ifdef HAVE_DB_H
 	  if (typ == 3 || typ == 4) {
 	    DBT Bkey, Bdat;
+
+	    memset(&Bkey,0,sizeof(Bkey));
+	    memset(&Bdat,0,sizeof(Bdat));
+
 	    Bkey.data = (void*)t;
 	    Bkey.size = tlen;
+#ifdef HAVE_DB_OPEN2
+	    rc = (dbfile->get) (dbfile, NULL, &Bkey, &Bdat, 0);
+#else
 	    rc = (dbfile->get) (dbfile, &Bkey, &Bdat, 0);
+#endif
 	    if (rc != 0)
 	      memset(&Bdat, 0, sizeof(Bdat));
 	    dataptr = Bdat.data;
@@ -307,10 +326,10 @@ const int typ;
 	   store_db() to work differently from alias append */
 	append_mode = -append_mode;
 
-	while ((llen = getline(infile)) != 0) {
+	while ((llen = zgetline(infile)) != 0) {
 		++linenum;
 		policydatalen = 0;
-		if (linebuf[llen-1] != '\n') {
+		if (zlinebuf[llen-1] != '\n') {
 			/* Eh ? No line ending newline ?
 			   Ah well, there is always at least one byte
 			   of space after the read block. */
@@ -318,18 +337,18 @@ const int typ;
 			fprintf(stderr, "input line of len %d lacking trailing newline, corrupted file ?\n", llen-1);
 			errflag = 1;
 		}
-		linebuf[llen-1] = '\0';
+		zlinebuf[llen-1] = '\0';
 
-		if (*linebuf == '#')
+		if (*zlinebuf == '#')
 			continue;	/* Comment! */
 
-		if (*linebuf == ' ' || *linebuf == '\t')
+		if (*zlinebuf == ' ' || *zlinebuf == '\t')
 			continue;	/* Starts with a white-space! */
 
 		/* Scan first white-space separated token,
 		   point its start with t! */
 
-		t = linebuf;
+		t = zlinebuf;
 		while (*t == '\t' || *t == ' ')
 			++t;
 
@@ -481,23 +500,23 @@ const int typ;
 	int  count   = 0;
 	long totsize = 0;
 
-	while ((llen = getline(infile)) != 0) {
+	while ((llen = zgetline(infile)) != 0) {
 		++linenum;
-		if (linebuf[llen-1] != '\n') {
+		if (zlinebuf[llen-1] != '\n') {
 			/* Eh ? No line ending newline ?
 			   Ah well, there is always at least one byte
 			   of space after the read block. */
 			++llen;
 			fprintf(stderr, "input line lacking trailing newline, corrupted file ?\n");
-			fprintf(stderr, " len=%d, linebuf='%s'\n", llen, linebuf);
+			fprintf(stderr, " len=%d, zlinebuf='%s'\n", llen, zlinebuf);
 		}
-		linebuf[llen-1] = '\0';
+		zlinebuf[llen-1] = '\0';
 
 		if (verbose)
-		  fprintf(stderr,"aliases parser: getline() llen=%d, str='%.*s'\n",
-			  llen, llen, linebuf);
+		  fprintf(stderr,"aliases parser: zgetline() llen=%d, str='%.*s'\n",
+			  llen, llen, zlinebuf);
 
-		if (*linebuf == '#') {
+		if (*zlinebuf == '#') {
 			/* Comment! */
 		store_and_continue:
 			if (t0 != NULL) {
@@ -523,7 +542,7 @@ const int typ;
 			continue;
 		}
 
-		t = linebuf;
+		t = zlinebuf;
 		/* Key starts at line start, continuation lines start
 		   with white-space */
 
@@ -641,24 +660,24 @@ const int typ;
 	int linenum = 0;
 	int errflag = 0;
 
-	while ((llen = getline(infile)) != 0) {
+	while ((llen = zgetline(infile)) != 0) {
 		++linenum;
-		if (linebuf[llen-1] != '\n') {
+		if (zlinebuf[llen-1] != '\n') {
 			/* Eh ? No line ending newline ?
 			   Ah well, there is always at least one byte
 			   of space after the read block. */
 			++llen;
 			fprintf(stderr, "input file lacking trailing newline, corrupted file ?\n");
 		}
-		linebuf[llen-1] = '\0';
+		zlinebuf[llen-1] = '\0';
 
-		if (*linebuf == '#')
+		if (*zlinebuf == '#')
 			continue;	/* Comment! */
 
 		/* Scan first white-space separated token,
 		   point its start with t! */
 
-		t = linebuf;
+		t = zlinebuf;
 		while (*t == '\t' || *t == ' ')
 			++t;
 
@@ -812,6 +831,22 @@ char *argv[];
     }
 #endif
 #ifdef HAVE_DB_H
+#ifdef HAVE_DB_OPEN2
+    if (typ == 3) {
+	dbasename = strcpy(malloc(strlen(dbasename) + 8), dbasename);
+	strcat(dbasename, ".db");	/* ALWAYS append this */
+	dbfile = NULL;
+	db_open(dbasename, DB_BTREE,  DB_CREATE|DB_TRUNCATE,
+		0644, NULL, NULL, &dbfile);
+	dbf = dbfile;
+    }
+    if (typ == 4) {
+	dbfile = NULL;
+	db_open(dbasename, DB_HASH,  DB_CREATE|DB_TRUNCATE,
+		0644, NULL, NULL, &dbfile);
+	dbf = dbfile;
+    }
+#else
     if (typ == 3) {
 	dbasename = strcpy(malloc(strlen(dbasename) + 8), dbasename);
 	strcat(dbasename, ".db");	/* ALWAYS append this */
@@ -825,10 +860,11 @@ char *argv[];
 	dbf = dbfile;
     }
 #endif
+#endif
     if (dbf == NULL)
 	usage(argv0, "Can't open dbase file", errno);
 
-    initline(BUFSIZ);
+    initzline(BUFSIZ);
 
     if (policyinput)
 	    rc = create_policy_dbase(infile, dbf, typ);
@@ -848,7 +884,11 @@ char *argv[];
 #ifdef HAVE_DB_H
     if (typ == 3 || typ == 4) {
 	(dbfile->sync) (dbfile, 0);
+#ifdef HAVE_DB_OPEN2
+	(dbfile->close) (dbfile, 0);
+#else
 	(dbfile->close) (dbfile);
+#endif
     }
 #endif
 

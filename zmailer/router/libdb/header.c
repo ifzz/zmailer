@@ -52,11 +52,11 @@ struct headerinfo optional_hdrs[] = {
 { "encrypted",		Encrypted,	nilUserType,	normal		},
 { "errors-to",		AddressList,	Sender,		normal		},
 { "obsoletes",		MessageIDList,	nilUserType,	normal		},
-#if 0
+#if 0 /* Don't parse these .. */
+{ "received",		Received,	nilUserType,	normal		},
 { "keywords",		PhraseList,	nilUserType,	normal		},
 { "references",		References,	nilUserType,	normal		},
 { "in-reply-to",	References,	nilUserType,	normal		},
-{ "received",		Received,	nilUserType,	normal		},
 #endif
 };
 
@@ -74,7 +74,7 @@ struct headerinfo envelope_hdrs[] = {
 { "identinfo",	nilHeaderSemantics,	nilUserType,	eIdentinfo	},
 { "loginname",		UserAtDomain,	nilUserType,	ePrettyLogin	},
 { "notaryret",	nilHeaderSemantics,	nilUserType,	eNotaryRet	},
-{ "rcvdfrom",		UserAtDomain,	nilUserType,	eRcvdFrom	},
+{ "rcvdfrom",		DomainName,	nilUserType,	eRcvdFrom	},
 { "to",			AddressList,	Recipient,	eTo		},
 { "todsn",	nilHeaderSemantics,	Recipient,	eToDSN		},
 { "user",		Mailbox,	nilUserType,	eUser		},
@@ -249,8 +249,9 @@ search_header(sip)
 {
 	struct sptree *hdb;
 	struct headerinfo *rhp;
-	conscell *tmp;
 	char buf[1024];
+	int slen;
+	char *s;
 
 	hdb = open_header(sip);
 	if (hdb == NULL)
@@ -263,7 +264,9 @@ search_header(sip)
 		rhp->user_type  == Sender    ? "Sender"    :
 		(rhp->user_type == Recipient ? "Recipient" : ""),
 		rhp->class      == Resent    ? "Resent"    : "");
-	return newstring(strsave(buf));
+	slen = strlen(buf);
+	s = dupnstr(buf, slen);
+	return newstring(s, slen);
 }
 
 /*
@@ -281,8 +284,9 @@ hdfreedata(spl)
 }
 
 void
-close_header(sip)
+close_header(sip,comment)
 	search_info *sip;
+	const char *comment;
 {
 	struct sptree *hdb;
 

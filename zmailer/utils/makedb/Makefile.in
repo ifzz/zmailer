@@ -13,13 +13,13 @@ CPPDEP=		@CPPDEP@
 MAILBIN=	$(prefix)@MAILBIN@
 DEFS=		@DEFS@
 INSTALL=	@INSTALL@
-CFLAGS=		$(COPTS) $(CPPFLAGS) $(DEFS) @GENINCL@ $(INCL)
+CFLAGS=		$(COPTS) $(CPPFLAGS) $(DEFS) $(INCL) @GENINCL@
 TOPDIR=		../..
-INCL=		-I$(srcdir)/$(TOPDIR)/include -I$(TOPDIR)/include -I$(TOPDIR)
+INCL=		-I$(srcdir)/$(TOPDIR)/include -I$(TOPDIR)/include -I$(TOPDIR) @GENINCL@
 
 PROGS=		makedb dblook
 SOURCE=		makedb.c dblook.c
-LIBS=		-L$(TOPDIR)/libs -lz -lzc @LIBDBMS@
+LIBS=		@GENLIB@ -L$(TOPDIR)/libs -lzm -lzc @LIBLOCALDBMS@
 
 all: $(PROGS)
 

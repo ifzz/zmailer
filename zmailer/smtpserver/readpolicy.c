@@ -19,6 +19,9 @@
 
 #include "policy.h"
 
+#include <netinet/in.h>
+#include <arpa/inet.h>
+
 #include "libz.h"
 #include "libc.h"
 
@@ -65,7 +68,9 @@ char *str, *wstr;
     char *s;
     int width;
     struct policy_ipv4 *ip4 = (struct policy_ipv4 *) pbuf;
+#if defined(AF_INET6) && defined(INET6)
     struct policy_ipv6 *ip6 = (struct policy_ipv6 *) pbuf;
+#endif
 
     if (*str == '[') {
 	++str;

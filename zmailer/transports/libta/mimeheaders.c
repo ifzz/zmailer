@@ -42,7 +42,7 @@
 #endif
 #endif
 
-#include "malloc.h"
+#include "zmalloc.h"
 #include "libz.h"
 #include "ta.h"
 
@@ -716,7 +716,7 @@ FILE *verboselog;
 	return 1;
 }
 
-void
+int
 downgrade_headers(rp, convertmode, verboselog)
 struct rcpt *rp;
 int convertmode;
@@ -726,16 +726,17 @@ FILE *verboselog;
 	char **CT   = NULL;
 	char **CTE  = NULL;
 	char **MIME = NULL;
-	char **receivedp = NULL;
+	/* char **receivedp = NULL; */
 	struct ct_data *ct;
 	int lines = 0;
 	int i;
+	int is_textplain;
 	int newlen;
 
 	if (*(rp->newmsgheadercvt) != NULL)
-	  return; /* Already converted ! */
+	  return 0; /* Already converted ! */
 
-	if (!cvtspace_copy(rp)) return; /* XX: auch! */
+	if (!cvtspace_copy(rp)) return 0; /* XX: auch! */
 
 	oldmsgheader = rp->newmsgheadercvt;
 
@@ -778,7 +779,7 @@ NULL };
 #endif
 	  sprintf(newct,"Content-Type: TEXT/PLAIN; charset=%s",defcharset);
 
-	  if (!newmsgheaders) return; /* XX: Auch! */
+	  if (!newmsgheaders) return 0; /* XX: Auch! */
 
 	  for (lines = 0; warning_lines[lines] != NULL; ++lines)
 	    newmsgheaders[lines] = strdup(warning_lines[lines]);
@@ -806,14 +807,14 @@ NULL };
 
 	  free(*oldmsgheader); /* Free the old one.. */
 	  *oldmsgheader = newmsgheaders;
-	  return;
+	  return 0;
 	}
 
 	/* Now look for the  Content-Transfer-Encoding:  header */
 
-	receivedp = has_header(rp,"Received:");
+	/*receivedp = has_header(rp,"Received:");*/
 
-	if (CTE == NULL) return; /* No C-T-E: ??? */
+	if (CTE == NULL) return 0; /* No C-T-E: ??? */
 
 	/* strlen("Content-Transfer-Encoding: QUOTED-PRINTABLE") == 43
 	   strlen("Content-Transfer-Encoding: 7BIT") == 31		*/
@@ -824,44 +825,52 @@ NULL };
 
 	*CTE = (char *)ctlrealloc(rp->desc,*CTE,newlen+2);
 
-	if (convertmode == _CONVERT_QP) {
-
-	  strcpy(*CTE, "Content-Transfer-Encoding: QUOTED-PRINTABLE");
-	  mime_received_convert(rp," convert rfc822-to-quoted-printable");
-	  return; /* No change on   Charset.. */
-
-	} else
-	  strcpy(*CTE, "Content-Transfer-Encoding: 7BIT");
-
 	/* Ok, this was C-T-E: 7BIT, turn charset to US-ASCII if it
 	   was  ISO-*  */
 	if (CT == NULL && verboselog) {
 	  fprintf(verboselog,"Had Content-Transfer-Encoding -header, but no Content-Type header ???  Adding C-T..\n");
 	}
-	
+
 	if (CT == NULL) { /* ???? Had C-T-E, but no C-T ?? */
 	  append_header(rp,"Content-Type: TEXT/PLAIN; charset=US-ASCII");
-	  return;
+	  return 0;
 	}
 
 	ct = parse_content_type(CT);
 
-	if (ct->basetype == NULL ||
-	    ct->subtype  == NULL ||
-	    cistrcmp(ct->basetype,"text") != 0 ||
-	    cistrcmp(ct->subtype,"plain") != 0) return; /* Not TEXT/PLAIN! */
+	is_textplain = (ct->basetype != NULL &&
+			ct->subtype  != NULL &&
+			cistrcmp(ct->basetype,"text") == 0 &&
+			cistrcmp(ct->subtype,"plain") == 0);
 
-	if (ct->charset &&
-	    cistrncmp(ct->charset,"ISO-8859",8) != 0 &&
-	    cistrncmp(ct->charset,"KOI8",4)     != 0) return; /* Not ISO-* */
+	if (ct->charset && is_textplain &&
+	    (convertmode != _CONVERT_QP) &&
+	    /* Change to US-ASCII for known 7-bit clean
+	       inputs where the claimed charset(prefix) has
+	       all its charsets equal to US-ASCII in the
+	       low 128 characters. */
+	    (cistrncmp(ct->charset,"ISO-8859",8) == 0 ||
+	     cistrncmp(ct->charset,"KOI8",4)     == 0)) {
 
-	if (ct->charset)
-	  free(ct->charset);
+	  if (ct->charset)
+	    free(ct->charset);
 
-	ct->charset = strdup("US-ASCII");
+	  ct->charset = strdup("US-ASCII");
+	  strcpy(*CTE, "Content-Transfer-Encoding: 7BIT");
+
+	}
 
 	/* Delete the old one, and place there the new version.. */
 	output_content_type(rp,ct,CT);
+
+	if (convertmode == _CONVERT_QP) {
+
+	  strcpy(*CTE, "Content-Transfer-Encoding: QUOTED-PRINTABLE");
+	  mime_received_convert(rp," convert rfc822-to-quoted-printable");
+
+	}
+
+	return 1; /* Non-zero for success! */
 }
 
 
@@ -915,7 +924,8 @@ qp_to_8bit(rp)
 {
 	char **inhdr;
 	char *hdr, *p;
-	char **CTE;
+	char **CTE, **CT;
+	struct ct_data *ct;
 
 	if (!cvtspace_copy(rp))
 	  return 0;	/* Failed to copy ! */
@@ -923,8 +933,16 @@ qp_to_8bit(rp)
 	inhdr = *(rp->newmsgheadercvt);
 
 	CTE = has_header(rp,cCTE);
+	CT  = has_header(rp,cCT);
 
-	if (!CTE) return 0; /* No C-T-E header! */
+	if (!CTE || !CT) return 0; /* No C-T-E header! */
+
+	ct = parse_content_type(CT);
+
+	if (ct->basetype == NULL ||
+	    ct->subtype  == NULL ||
+	    cistrcmp(ct->basetype,"text") != 0 ||
+	    cistrcmp(ct->subtype,"plain") != 0) return 0; /* Not TEXT/PLAIN! */
 
 	hdr = *CTE;
 
