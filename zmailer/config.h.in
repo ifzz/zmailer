@@ -364,6 +364,9 @@
 /* Define if you have the lstat function.  */
 #undef HAVE_LSTAT
 
+/* Define if you have the memchr function.  */
+#undef HAVE_MEMCHR
+
 /* Define if you have the memcpy function.  */
 #undef HAVE_MEMCPY
 
@@ -372,6 +375,9 @@
 
 /* Define if you have the mkfifo function.  */
 #undef HAVE_MKFIFO
+
+/* Define if you have the mkstemp function.  */
+#undef HAVE_MKSTEMP
 
 /* Define if you have the mktime function.  */
 #undef HAVE_MKTIME

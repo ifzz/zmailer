@@ -161,10 +161,13 @@ int MaxSameIpSource = 100;	/* Max number of smtp connections in progress
 				   creating a denial-of-service attach by
 				   opening lots and lots of connections to
 				   the remote SMTP server... */
+int MaxParallelConnections = 800; /* Total number of childs allowed */
+
 int MaxErrorRecipients = 10;	/* Max number of recipients for a message
 				   that has a "box" ( "<>" ) as its source
 				   address. */
 int percent_accept = 0;
+
 int maxloadavg = 999;		/* Maximum load-average that is tolerated
 				   with smtp-server actively receiving..
 				   Default value of 999 is high enough
@@ -173,11 +176,22 @@ int maxloadavg = 999;		/* Maximum load-average that is tolerated
 
 int allow_source_route = 0;	/* When zero, do ignore source route address
 				   "@a,@b:c@d" by collapsing it into "c@d" */
+
+int rcptlimitcnt = 10000;	/* Allow up to 10 000 recipients for each
+				   MAIL FROM. -- or tune this.. */
+
 int debugcmdok = 0;
 int expncmdok = 0;
 int vrfycmdok = 0;
 int use_ipv6 = 0;
 int ident_flag = 0;
+int pipeliningok = 1;
+int chunkingok = 1;
+int enhancedstatusok = 1;
+int mime8bitok = 1;
+int dsn_ok = 1;
+int ehlo_ok = 1;
+int etrn_ok = 1;
 #ifndef	IDENT_TIMEOUT
 #define	IDENT_TIMEOUT	5
 #endif				/* IDENT_TIMEOUT */
@@ -267,7 +281,7 @@ char **argv;
     int localsocksize;
     char *cfgpath = NULL;
     SmtpState SS;
-    int childpid, sameipcount;
+    int childpid, sameipcount, childcnt;
     time_t now;
 
 
@@ -495,7 +509,7 @@ char **argv;
 
     if (!daemon_flg) {
 
-      raddrlen = sizeof SS.raddr;
+      raddrlen = sizeof(SS.raddr);
       memset(&SS.raddr, 0, raddrlen);
       if (getpeername(SS.inputfd, (struct sockaddr *) &SS.raddr, &raddrlen))
 	netconnected_flg = 0;
@@ -520,7 +534,7 @@ char **argv;
 	    exit(1);
 	}
 #endif
-	raddrlen = sizeof SS.raddr;
+	raddrlen = sizeof(SS.raddr);
 	memset(&SS.raddr, 0, raddrlen);
 
 	if (getpeername(SS.inputfd, (struct sockaddr *) &SS.raddr, &raddrlen))
@@ -819,7 +833,7 @@ char **argv;
 		continue;
 	    }
 
-	    sameipcount = childsameip(&SS.raddr);
+	    sameipcount = childsameip(&SS.raddr, &childcnt);
 	    /* We query, and warn the remote when
 	       the count exceeds the limit, and we
 	       simply -- and FAST -- reject the
@@ -829,7 +843,11 @@ char **argv;
 	      close(msgfd);
 	      continue;
 	    }
-
+	    
+	    if (childcnt > 100+MaxParallelConnections) {
+	      close(msgfd);
+	      continue;
+	    }
 
 	    SIGNAL_HOLD(SIGCHLD);
 	    if ((childpid = fork()) < 0) {	/* can't fork! */
@@ -917,17 +935,40 @@ char **argv;
 		if (logfp != NULL) {
 #ifdef HAVE_WHOSON_H
 		    fprintf(logfp,
-			    "%d#\tconnection from %s ipcnt %d ident: %s whoson: %s\n",
-			    pid, SS.rhostname, sameipcount, SS.ident_username,
-			    SS.whoson_data);
+			    "%d#\tconnection from %s ipcnt %d childs %d ident: %s whoson: %s\n",
+			    pid, SS.rhostname, sameipcount, childcnt,
+			    SS.ident_username, SS.whoson_data);
 #else
 		    fprintf(logfp,
-			    "%d#\tconnection from %s ipcnt %d ident: %s\n",
-			    pid, SS.rhostname, sameipcount, SS.ident_username);
+			    "%d#\tconnection from %s ipcnt %d childs %d ident: %s\n",
+			    pid, SS.rhostname, sameipcount, childcnt,
+			    SS.ident_username);
 #endif
 		}
 /* if (logfp) fprintf(logfp,"%d#\tInput fd=%d\n",getpid(),msgfd); */
 
+		if (childcnt > MaxParallelConnections) {
+		    int len;
+		    char msg[200];
+		    sprintf(msg, "450-Too many simultaneous connections to this server (%d max %d)\r\n", childcnt, MaxParallelConnections);
+		    len = strlen(msg);
+		    if (write(msgfd, msg, len) != len) {
+		      sleep(2);
+		      exit(1);	/* Tough.. */
+		    }
+		    strcpy(msg, "450 Come again latter\r\n");
+		    len = strlen(msg);
+		    write(msgfd, msg, len);
+		    close(0); close(1);
+#if 1
+		    sleep(2);	/* Not so fast!  We need to do this to
+				   avoid (as much as possible) the child
+				   to exit before the parent has called
+				   childregister() -- not so easy to be
+				   100% reliable (this isn't!) :-( */
+#endif
+		    exit(0);	/* Now exit.. */
+		}
 		if (sameipcount > MaxSameIpSource && sameipcount > 1) {
 		    int len;
 		    char msg[200];
@@ -1213,6 +1254,9 @@ int insecure;
 
     runastrusteduser();
 
+    if (!netconnected_flg)
+      strict_protocol = 0;
+
     rc = setjmp(jmpalarm);
     if (rc != 0) {
 	/* Oooo...  We are returning here via  longjmp(),
@@ -1389,7 +1433,7 @@ int insecure;
 
 	rc = -1;
 
-	if (!s_hasinput(SS))
+	if (!pipeliningok || !s_hasinput(SS))
 	    typeflush(SS);
 	else
 	    /* if (verbose) */
@@ -1519,6 +1563,14 @@ int insecure;
 	if (SS->carp->cmd == Expand    && ! expncmdok)
 	  goto unknown_command;
 	if (SS->carp->cmd == Verify    && ! vrfycmdok)
+	  goto unknown_command;
+	if (SS->carp->cmd == Verify2   && ! vrfycmdok)
+	  goto unknown_command;
+	if (SS->carp->cmd == Hello2    && ! ehlo_ok)
+	  goto unknown_command;
+	if (SS->carp->cmd == Turnme    && ! etrn_ok)
+	  goto unknown_command;
+	if (SS->carp->cmd == BData     && ! chunkingok)
 	  goto unknown_command;
 
 	if (policystatus != 0 &&
@@ -1730,7 +1782,7 @@ va_dcl
     for (s = s + strlen(s); s < buf + cmdlen; ++s)
 	*s = '\0';
     buf[cmdlen] = '\0';
-    memcpy((char *) cmdline, buf, cmdlen);
+    memcpy((char *) cmdline, buf, cmdlen+1);
     va_end(ap);
 }
 
@@ -1773,12 +1825,12 @@ const char *status, *fmt, *s1, *s2, *s3, *s4, *s5, *s6;
 	c = ' ';
 
     fprintf(SS->outfp, "%03d%c", code, c);
-    if (status && status[0] != 0)
+    if (enhancedstatusok && status && status[0] != 0)
       fprintf(SS->outfp, "%s ", status);
 
     if (logfp != NULL) {
       fprintf(logfp, "%dw\t%03d%c", pid, code, c);
-      if (status && status[0] != 0)
+      if (enhancedstatusok && status && status[0] != 0)
 	fprintf(logfp, "%s ", status);
     }
 
@@ -2019,9 +2071,15 @@ va_dcl
 
     abscode = (code < 0) ? -code : code;
 
-    fprintf(SS->outfp, "%03d-%s ", abscode, status);
-    if (logfp != NULL)
+    if (status && enhancedstatusok) {
+      fprintf(SS->outfp, "%03d-%s ", abscode, status);
+      if (logfp != NULL)
 	fprintf(logfp, "%dw\t%03d-%s ", pid, abscode, status);
+    } else { /* No status codes */
+      fprintf(SS->outfp, "%03d- ", abscode);
+      if (logfp != NULL)
+	fprintf(logfp, "%dw\t%03d- ", pid, abscode);
+    }
     while (s < rfc821_error_ptr && --maxcnt >= 0) {
 	++s;
 	putc(' ', SS->outfp);

@@ -68,11 +68,20 @@ server (key) {
 #| otherwise proper for the purpose.  The value specified for the privilege
 #| level should be appropriate.
 
-	case $key in
+	case "$key" in
+	from)
+		if [ "$1" = "" ]; then
+			echo "250 Ok (sourcechannel 'error' accepted)"
+			return
+		fi
+		;;
+	esac
+
+	case "$key" in
 	to|from|verify|expand)
 		a="$1"
-		tsift "$a" in
-		<(.+)>	a="\1" ;;
+		tsift "$a" in # "Defocus" brackets
+		<(.+)>	a="\1"; continue ;;
 		tfist
 		if rfc822syntax "$a"; then ; else
 			echo "554 illegal address syntax: <$a>"
@@ -81,7 +90,7 @@ server (key) {
 		;;
 	esac
 
-	case $key in
+	case "$key" in
 	init)	# If you want to log incoming connections, it can be done here
 		#echo server $@ >> /tmp/server
 		# redefine the log function
@@ -89,7 +98,7 @@ server (key) {
 		}
 		;;
 	to|from)
-		a="$(router "$1" default_attributes)"
+		a="$(router "$a" default_attributes)"
 		for i in $(elements $a)
 		do
 			for j in $(elements $i)
@@ -108,7 +117,7 @@ server (key) {
 		echo "250 Ok (verified)"
 		;;
 	verify)
-		a="$(router "$1" $A)"
+		a="$(router "$a" $A)"
 #| Invoke the router function with alias expansion turned off.
 		for i in $(elements $a)
 		do
@@ -119,7 +128,7 @@ server (key) {
 		done
 		;;
 	expand)
-		a="$(router "$1" $B)"
+		a="$(router "$a" $B)"
 
 #| Invoke the router function with alias expansion enabled.
 
