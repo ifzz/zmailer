@@ -64,6 +64,7 @@ struct rcpt {
 	struct ctldesc	*desc;		/* backpointer to descriptor */
 	/* XX: something needed for XOR address lists */
 
+	char		*delayslot;
 #if 0 /* not yet ?? */
 	/* Delayed diagnostics */
 	char		*diagdelaybuf;
@@ -186,7 +187,7 @@ extern int erename __((char *from, char *to));
 #endif
 
 /* lockaddr.c: */
-extern int lockaddr __((int fd, char *map, long offset, int was, int new, const char *file, const char *host, const int mypid));
+extern int lockaddr __((int fd, char *map, int offset, int was, int new, const char *file, const char *host, const int mypid));
 
 /* markoff.c: */
 extern int markoff __((char *filecontents, int bytesleft, long offsets[], const char *filename));
@@ -205,7 +206,7 @@ extern int cte_check __((struct rcpt *rp));
 extern char **has_header __((struct rcpt *rp, const char *keystr));
 extern void delete_header __((struct rcpt *rp, char **hdrp));
 extern int  downgrade_charset __((struct rcpt *rp, FILE *verboselog));
-extern void downgrade_headers __((struct rcpt *rp, int downgrade, FILE *verboselog));
+extern int  downgrade_headers __((struct rcpt *rp, int downgrade, FILE *verboselog));
 extern int qp_to_8bit __((struct rcpt *rp));
 
 /* mime2headers.c */

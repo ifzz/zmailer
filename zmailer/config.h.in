@@ -277,6 +277,10 @@
 /* */
 #undef HAVE_WHOSON_H
 
+/* HAVE_OPENSSL -- The system has www.OpenSSL.org software;
+   version 0.9.2b, very least */
+#undef HAVE_OPENSSL
+
 /* The number of bytes in a double.  */
 #undef SIZEOF_DOUBLE
 
@@ -291,6 +295,9 @@
 
 /* The number of bytes in a void *.  */
 #undef SIZEOF_VOID_P
+
+/* Define if you have the crypt function.  */
+#undef HAVE_CRYPT
 
 /* Define if you have the endgrent function.  */
 #undef HAVE_ENDGRENT
@@ -364,6 +371,9 @@
 /* Define if you have the lstat function.  */
 #undef HAVE_LSTAT
 
+/* Define if you have the memchr function.  */
+#undef HAVE_MEMCHR
+
 /* Define if you have the memcpy function.  */
 #undef HAVE_MEMCPY
 
@@ -372,6 +382,9 @@
 
 /* Define if you have the mkfifo function.  */
 #undef HAVE_MKFIFO
+
+/* Define if you have the mkstemp function.  */
+#undef HAVE_MKSTEMP
 
 /* Define if you have the mktime function.  */
 #undef HAVE_MKTIME

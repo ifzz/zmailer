@@ -622,6 +622,9 @@ main(argc, argv)
 	RETSIGTYPE (*oldsig)__((int));
 	const char *smtphost, *punthost = NULL;
 
+	setvbuf(stdout, NULL, _IOFBF, 8096*4 /* 32k */);
+	fd_blockingmode(FILENO(stdout)); /* Just to make sure.. */
+
 	pid = getpid();
 	msgfile = "?";
 	getout = 0;
@@ -784,9 +787,6 @@ main(argc, argv)
 	} else
 	  need_host = 1;
 
-	setvbuf(stdout, NULL, _IOFBF, 8096*4 /* 32k */);
-	fd_blockingmode(FILENO(stdout)); /* Just to make sure.. */
-
 	if (myhostnameopt == 0) {
 	  /* Default it only when not having an explicite value
 	     in it..   James S MacKinnon <jmack@Phys.UAlberta.Ca> */
@@ -799,6 +799,7 @@ main(argc, argv)
 	  exit(0);
 	}
 
+	logfp = NULL;
 	if (logfile != NULL) {
 	  if ((fd = open(logfile, O_CREAT|O_APPEND|O_WRONLY, 0644)) < 0)
 	    fprintf(stdout,
@@ -806,8 +807,7 @@ main(argc, argv)
 		    argv[0], logfile);
 	  else
 	    logfp = (FILE *)fdopen(fd, "a");
-	} else
-	  logfp = NULL;
+	}
 
 	if (logfp)
 	  setvbuf(logfp, NULL, _IOLBF, 0);
@@ -1145,7 +1145,8 @@ deliver(SS, dp, startrp, endrp)
 	    if ((force_7bit || (SS->ehlo_capabilities & ESMTP_8BITMIME)== 0) &&
 		!ascii_clean && !force_8bit) {
 	      convertmode = _CONVERT_QP;
-	      downgrade_headers(startrp, convertmode, SS->verboselog);
+	      if (!downgrade_headers(startrp, convertmode, SS->verboselog))
+		convertmode = _CONVERT_NONE; /* Failed! */
 	    }
 	    break;
 	  case 9:		/* C-T-E: Quoted-Printable */
@@ -1153,7 +1154,8 @@ deliver(SS, dp, startrp, endrp)
 	      /* Force(d) to decode Q-P while transfer.. */
 	      convertmode = _CONVERT_8BIT;
 	      /*  UPGRADE TO 8BIT !  */
-	      qp_to_8bit(startrp);
+	      if (!qp_to_8bit(startrp))
+		convertmode = _CONVERT_NONE;
 	      content_kind = 10;
 	      ascii_clean = 0;
 	    }
@@ -2166,6 +2168,7 @@ writemimeline(SS, buf, len, convertmode)
 	    }
 	    /* Any other char which needs quoting ? */
 	    if (c == '='  ||  c > 126 ||
+		(column == 0 && (c == 'F' || c == '.')) ||
 		(c != '\n' && c != '\t' && c < 32)) {
 
 	      ssputc(SS, '=', fp);
@@ -3314,6 +3317,8 @@ int bdat_flush(SS, lastflg)
 	r = smtpwrite(SS, 1, lbuf, 1 /* ALWAYS "pipeline" */, NULL);
 	if (r != EX_OK)
 	  return r;
+
+	&r; /* longjump() globber danger */
 
 	if (setjmp(alarmjmp) == 0) {
 	  for (pos = 0; pos < SS->chunksize;) {

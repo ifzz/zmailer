@@ -131,6 +131,15 @@ AC_CHECK_SIZEOF(int)
 AC_CHECK_SIZEOF(long)
 AC_CHECK_SIZEOF(double)
 
+AC_SUBST(GENINCL)
+AC_ARG_WITH(generic-include, [  --with-generic-include=\"-I/...\"
+                            Include option for local overriders],
+	use_genincl=1, use_genincl=0)
+if test "$use_genincl" = 1; then
+  GENINCL="$withval"
+  CPPFLAGS="$CPPFLAGS $withval"
+fi
+
 AC_SUBST(ZMAILERCFGFILE)
 use_zcfg=0
 AC_ARG_WITH(zconfig, 
@@ -857,8 +866,9 @@ if test "$ac_with_ipv6" = yes; then
 		[int af = AF_INET6;],
 		ac_cv_af_inet6=yes, ac_cv_af_inet6=no)
     if test "$ac_cv_af_inet6" = yes; then
-	AC_TRY_LINK([#include <sys/socket.h>
-		     #include <netinet/in.h>],
+	AC_TRY_LINK([#include <sys/types.h>
+#include <sys/socket.h>
+#include <netinet/in.h>],
 		    [/* Has AF_INET6, but does one have all related things ? */
 		     struct in6_addr sin6;],
 		    ac_cv_struct_in6_addr=yes, ac_cv_struct_in6_addr=no)
@@ -916,7 +926,7 @@ fi
 
 AC_FUNC_SVR4_MAILLOCK
 
-AC_CHECK_FUNCS(mkdir mktime rename rmdir strcpy strdup strstr \
+AC_CHECK_FUNCS(mkdir mktime mkstemp rename rmdir strcpy strdup strstr \
 		strchr strrchr setvbuf strerror strsignal setreuid \
 		setregid sigprocmask sigpending sigsuspend)
 # If the system does not have the following (library) calls,
@@ -937,7 +947,7 @@ AC_TRY_LINK([extern char *sys_siglist[]; static char *s;], [s = sys_siglist[2]; 
 AC_CHECK_FUNCS(index rindex)
 # more tests..
 AC_CHECK_FUNCS(endgrent fchdir ftime getcwd getgroups setgroups \
-		getmntinfo gettimeofday isascii memcpy mkfifo   \
+		getmntinfo gettimeofday isascii memcpy memchr mkfifo   \
 		getpgrp setsid seteuid setuid)
 AC_CHECK_FUNCS(setrlimit fchown utimes utime sysconf fpathconf)
 # Networking stuff is in deep trouble, if sockets are not found..
@@ -1027,12 +1037,14 @@ if test "x$LIBRESOLV" = "x"; then
   LIBS="$LIBS $LIBSOCKET"
   ac_cv_var__res_options=no
   # This following is for IRIX6.4, and I sincerely hope it
-  # will not fail on other systems...
-  AC_TRY_LINK([
+  # will not fail on other systems...  It did! It did!
+  # Many systems don't have idemponent headers, they need specific
+  # includes before latter ones, or the latter ones won't be successful...
+  AC_TRY_LINK([#include <sys/types.h>
+#include <sys/socket.h>
 #include <netinet/in.h>
 #include <arpa/nameser.h>
-#include <resolv.h>
-],
+#include <resolv.h>],
 	      [_res.options = RES_INIT;],
 		ac_cv_var__res_options=yes);
   if test "$ac_cv_var__res_options" != "yes"; then
@@ -1165,8 +1177,13 @@ if test "$use_tcpwrappers" = 0 ; then
 	LIBS="$LIBS $LIBSOCKET $LIBWRAP"
 	CPPFLAGS="$CPPFLAGS $INCLWRAP"
 	AC_CACHE_VAL(ac_cv_lib_tcpwrap,
-	  [AC_TRY_LINK([#include <tcpd.h>
-			int deny_severity, allow_severity;],[hosts_access();],
+	  [AC_TRY_LINK([#include <stdio.h>
+#include <sys/types.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <tcpd.h>
+struct request_info request;
+int deny_severity, allow_severity;],[hosts_access(&request);],
 			ac_cv_lib_tcpwrap=yes,ac_cv_lib_tcpwrap=no)
 	  ])
 	if test "$ac_cv_lib_tcpwrap" = yes; then
@@ -1194,6 +1211,11 @@ AC_SUBST(PRIVATEMBOX)
 PRIVATEMBOX=""
 AC_ARG_WITH(privatembox,   [  --with-privatembox       Use 'private/' in a part of mailbox compilations],
 	PRIVATEMBOX="private/")
+
+AC_SUBST(PRIVATEAUTH)
+PRIVATEAUTH=""
+AC_ARG_WITH(privateauth,   [  --with-privateauth       Use 'private/' in a part of smtpserver compilations],
+	PRIVATEAUTH="private/")
 
 AC_SUBST(LIBWHOSON)
 AC_SUBST(INCLWHOSON)
@@ -1415,13 +1437,51 @@ if test "$use_getpwnam_lib" = 1; then
   GETPWLIB="$withval"
 fi
 
-AC_SUBST(GENINCL)
-AC_ARG_WITH(generic-include, [  --with-generic-include=\"-I/...\"
-                            Include option for local overriders],
-	use_genincl=1, use_genincl=0)
-if test "$use_genincl" = 1; then
-  GENINCL="$withval"
+AC_SUBST(OPENSSLPREFIX)
+AC_SUBST(OPENSSLINCL)
+AC_SUBST(OPENSSLLIB)
+AC_ARG_WITH(openssl-prefix, [  --with-openssl-prefix=/dir/path (defines both include and lib)],
+	OPENSSLPREFIX="$withval")
+AC_ARG_WITH(openssl-include, [  --with-openssl-include=/dir/incl/path],
+	OPENSSLINCL="-I$withval")
+AC_ARG_WITH(openssl-lib, [  --with-openssl-lib=/dir/lib/path],
+	OPENSSLLIB="$withval/libssl.a $withval/libcrypto.a")
+if test -n "$OPENSSLPREFIX" -a -z "$OPENSSLINCL" ; then
+  if test -f "$OPENSSLPREFIX/include/openssl/ssl.h" ; then
+    OPENSSLINCL="-I$OPENSSLPREFIX/include/"
+  else
+    AC_MSG_RESULT([!!! You defined  --with-openssl-prefix=$OPENSSLPREFIX,  BUT])
+    AC_MSG_RESULT([!!! there does not exist file  $OPENSSLPREFIX/include/openssl/ssl.h !])
+  fi
 fi
+if test -n "$OPENSSLPREFIX" -a -z "$OPENSSLLIB" ; then
+  if test -n "$OPENSSLPREFIX" -a -f "$OPENSSLPREFIX/lib/libssl.a" ; then
+    OPENSSLLIB="$OPENSSLPREFIX/lib/libssl.a $OPENSSLPREFIX/lib/libcrypto.a"
+  else
+    AC_MSG_RESULT([!!! You defined  --with-openssl-prefix=$OPENSSLPREFIX,  BUT])
+    AC_MSG_RESULT([!!! there does not exist file  $OPENSSLPREFIX/lib/libssl.a !])
+  fi
+fi
+if test -n "$OPENSSLINCL" -a -n "$OPENSSLLIB" ; then
+  AC_DEFINE(HAVE_OPENSSL)
+fi
+
+AC_CHECK_FUNCS(crypt)
+
+if test "$ac_cv_func_crypt" != yes ; then
+    # Now why ???  Must have "-lcrypt" like Linuxes ???
+    t_oldLibs="$LIBS"
+    LIBS="$LIBS -lcrypt"
+    AC_TRY_LINK([], [char *s1, *s2, *s3; s3 = crypt(s1,s2);],
+		ac_cv_lib_crypt_lib=yes,ac_cv_lib_crypt_lib=no)
+    if test "$ac_cv_lib_crypt_lib" = yes; then
+	# Success with this flag..
+	GETPWLIB="$GETPWLIB -lcrypt"
+	AC_MSG_RESULT([crypt() was found by using -lcrypt  library!])
+    fi
+    LIBS="$t_oldLibs"
+fi
+
 
 
 AC_STRUCT_DIRENT_D_INO

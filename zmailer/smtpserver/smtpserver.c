@@ -4,7 +4,7 @@
  */
 /*
  *    Several extensive changes by Matti Aarnio <mea@nic.funet.fi>
- *      Copyright 1991-1998.
+ *      Copyright 1991-1999.
  */
 
 /*
@@ -15,7 +15,7 @@
 
 const char *VerbID = "ZMailer SMTP server %s";
 const char *Copyright = "Copyright 1990 Rayan S. Zachariassen";
-const char *Copyright2 = "Copyright 1991-1997 Matti Aarnio";
+const char *Copyright2 = "Copyright 1991-1999 Matti Aarnio";
 
 /* Timing parameters -- when expired, session is killed ... */
 
@@ -43,7 +43,6 @@ const char *Copyright2 = "Copyright 1991-1997 Matti Aarnio";
 
 struct command command_list[] =
 {
-			/* 8-bit smtp extensions */
     {"EHLO", Hello2},
 			/* Normal stuff.. */
     {"HELO", Hello},
@@ -57,9 +56,12 @@ struct command command_list[] =
     {"HELP", Help},
     {"NOOP", NoOp},
     {"QUIT", Quit},
+
 			/* ZMailer speciality, and an alias for it */
-    {"ETRN", Turnme},
     {"TURNME", Turnme},
+    {"ETRN", Turnme},	/* RFC 1985 */
+			/* SMTP AUTH -- NetScape Way.. (RFC 2554) */
+    {"AUTH", Auth},
 			/* sendmail extensions */
     {"VERB", Verbose},
     {"ONEX", NoOp},
@@ -80,6 +82,9 @@ struct command command_list[] =
     {"IDENT", DebugIdent},
     {"DEBUG", DebugMode},
 			/* End of the list */
+#ifdef HAVE_OPENSSL
+    {"STARTTLS", StartTLS}, /* RFC 2487 */
+#endif
     {0, Null}
 };
 
@@ -161,10 +166,13 @@ int MaxSameIpSource = 100;	/* Max number of smtp connections in progress
 				   creating a denial-of-service attach by
 				   opening lots and lots of connections to
 				   the remote SMTP server... */
+int MaxParallelConnections = 800; /* Total number of childs allowed */
+
 int MaxErrorRecipients = 10;	/* Max number of recipients for a message
 				   that has a "box" ( "<>" ) as its source
 				   address. */
 int percent_accept = 0;
+
 int maxloadavg = 999;		/* Maximum load-average that is tolerated
 				   with smtp-server actively receiving..
 				   Default value of 999 is high enough
@@ -173,22 +181,50 @@ int maxloadavg = 999;		/* Maximum load-average that is tolerated
 
 int allow_source_route = 0;	/* When zero, do ignore source route address
 				   "@a,@b:c@d" by collapsing it into "c@d" */
+
+int rcptlimitcnt = 10000;	/* Allow up to 10 000 recipients for each
+				   MAIL FROM. -- or tune this.. */
+
 int debugcmdok = 0;
 int expncmdok = 0;
 int vrfycmdok = 0;
 int use_ipv6 = 0;
 int ident_flag = 0;
+int pipeliningok = 1;
+int chunkingok = 1;
+int enhancedstatusok = 1;
+int multilinereplies = 1;
+int enable_router = 0; /* Off by default -- security */
+int mime8bitok = 1;
+int dsn_ok = 1;
+int auth_ok = 0;
+int ehlo_ok = 1;
+int etrn_ok = 1;
+int starttls_ok = 0;
+char *tls_cert_file = NULL;
+char *tls_key_file  = NULL;
+char *tls_CAfile    = NULL;
+char *tls_CApath    = NULL;
+int tls_loglevel    = 0;
+int tls_enforce_tls = 0;
+int tls_ccert_vd    = 1;
+int tls_ask_cert    = 0;
+int tls_req_cert    = 0;
+
+#ifdef HAVE_OPENSSL
+SSL_CTX *ssl_ctx = NULL;
+#endif
+
+
 #ifndef	IDENT_TIMEOUT
 #define	IDENT_TIMEOUT	5
 #endif				/* IDENT_TIMEOUT */
 
 #if defined(AF_INET6) && defined(INET6)
-static const struct in6_addr zin6addrany = 
-{
-    { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}};
-const struct in6_addr zv4mapprefix = 
-{
-    { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 255, 255, 0, 0}};
+static const u_char zin6addrany[16] = 
+    { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
+const u_char zv4mapprefix[16] = 
+    { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 255, 255, 0, 0};
 #endif
 
 static void setrfc1413ident __((SmtpState * SS));
@@ -267,7 +303,7 @@ char **argv;
     int localsocksize;
     char *cfgpath = NULL;
     SmtpState SS;
-    int childpid, sameipcount;
+    int childpid, sameipcount, childcnt;
     time_t now;
 
 
@@ -488,6 +524,11 @@ char **argv;
     else
       cfhead = readcffile(cfgpath);
 
+#ifdef HAVE_OPENSSL
+    if (starttls_ok)
+      tls_init_serverengine(tls_ccert_vd,tls_ask_cert,tls_req_cert);
+#endif
+
     if (!allow_source_route)
       allow_source_route = (getzenv("ALLOWSOURCEROUTE") != NULL);
 
@@ -495,7 +536,7 @@ char **argv;
 
     if (!daemon_flg) {
 
-      raddrlen = sizeof SS.raddr;
+      raddrlen = sizeof(SS.raddr);
       memset(&SS.raddr, 0, raddrlen);
       if (getpeername(SS.inputfd, (struct sockaddr *) &SS.raddr, &raddrlen))
 	netconnected_flg = 0;
@@ -520,7 +561,7 @@ char **argv;
 	    exit(1);
 	}
 #endif
-	raddrlen = sizeof SS.raddr;
+	raddrlen = sizeof(SS.raddr);
 	memset(&SS.raddr, 0, raddrlen);
 
 	if (getpeername(SS.inputfd, (struct sockaddr *) &SS.raddr, &raddrlen))
@@ -570,15 +611,13 @@ char **argv;
 	pid = getpid();
 	settrusteduser();	/* dig out the trusted user ID */
 	openlogfp(&SS, daemon_flg);
-	if (logfp != NULL) {
 #ifdef HAVE_WHOSON_H
-	    fprintf(logfp, "%d#\tconnection from %s:%d ident: %s whoson: %s\n",
-		    pid, SS.rhostname, SS.rport, SS.ident_username, SS.whoson_data);
+	type(NULL,0,NULL,"connection from %s:%d ident: %s whoson: %s",
+	     SS.rhostname, SS.rport, SS.ident_username, SS.whoson_data);
 #else
-	    fprintf(logfp, "%d#\tconnection from %s:%d ident: %s\n",
-		    pid, SS.rhostname, SS.rport, SS.ident_username);
+	type(NULL,0,NULL,"connection from %s:%d ident: %s",
+	     SS.rhostname, SS.rport, SS.ident_username);
 #endif
-	}
 
 #if 0
 	SIGNAL_HANDLE(SIGCHLD, SIG_DFL);
@@ -694,7 +733,7 @@ char **argv;
 	    si6.sin6_family = AF_INET6;
 	    si6.sin6_flowinfo = 0;
 	    si6.sin6_port = port;
-	    si6.sin6_addr = zin6addrany;
+	    memcpy( &si6.sin6_addr, zin6addrany, 16 );
 
 	    i = bind(s, (struct sockaddr *) &si6, sizeof si6);
 	    if (i < 0) {
@@ -819,7 +858,7 @@ char **argv;
 		continue;
 	    }
 
-	    sameipcount = childsameip(&SS.raddr);
+	    sameipcount = childsameip(&SS.raddr, &childcnt);
 	    /* We query, and warn the remote when
 	       the count exceeds the limit, and we
 	       simply -- and FAST -- reject the
@@ -829,7 +868,11 @@ char **argv;
 	      close(msgfd);
 	      continue;
 	    }
-
+	    
+	    if (childcnt > 100+MaxParallelConnections) {
+	      close(msgfd);
+	      continue;
+	    }
 
 	    SIGNAL_HOLD(SIGCHLD);
 	    if ((childpid = fork()) < 0) {	/* can't fork! */
@@ -914,20 +957,42 @@ char **argv;
 		pid = getpid();
 
 		openlogfp(&SS, daemon_flg);
-		if (logfp != NULL) {
 #ifdef HAVE_WHOSON_H
-		    fprintf(logfp,
-			    "%d#\tconnection from %s ipcnt %d ident: %s whoson: %s\n",
-			    pid, SS.rhostname, sameipcount, SS.ident_username,
-			    SS.whoson_data);
+		type(NULL,0,NULL,
+		     "connection from %s ipcnt %d childs %d ident: %s whoson: %s",
+		     SS.rhostname, sameipcount, childcnt,
+		     SS.ident_username, SS.whoson_data);
 #else
-		    fprintf(logfp,
-			    "%d#\tconnection from %s ipcnt %d ident: %s\n",
-			    pid, SS.rhostname, sameipcount, SS.ident_username);
+		type(NULL,0,NULL,
+		     "connection from %s ipcnt %d childs %d ident: %s",
+		     SS.rhostname, sameipcount, childcnt,
+		     SS.ident_username);
 #endif
-		}
-/* if (logfp) fprintf(logfp,"%d#\tInput fd=%d\n",getpid(),msgfd); */
 
+/* if (logfp) type(NULL,0,NULL,"Input fd=%d",getpid(),msgfd); */
+
+		if (childcnt > MaxParallelConnections) {
+		    int len;
+		    char msg[200];
+		    sprintf(msg, "450-Too many simultaneous connections to this server (%d max %d)\r\n", childcnt, MaxParallelConnections);
+		    len = strlen(msg);
+		    if (write(msgfd, msg, len) != len) {
+		      sleep(2);
+		      exit(1);	/* Tough.. */
+		    }
+		    strcpy(msg, "450 Come again latter\r\n");
+		    len = strlen(msg);
+		    write(msgfd, msg, len);
+		    close(0); close(1);
+#if 1
+		    sleep(2);	/* Not so fast!  We need to do this to
+				   avoid (as much as possible) the child
+				   to exit before the parent has called
+				   childregister() -- not so easy to be
+				   100% reliable (this isn't!) :-( */
+#endif
+		    exit(0);	/* Now exit.. */
+		}
 		if (sameipcount > MaxSameIpSource && sameipcount > 1) {
 		    int len;
 		    char msg[200];
@@ -958,14 +1023,16 @@ char **argv;
 		if (routerpid > 0)
 		    killr(&SS, routerpid);
 
-		sleep(2);
+		if (netconnected_flg)
+		  sleep(2);
 		_exit(0);
 	    }
 	}
     }
     if (routerpid > 0)
 	killr(&SS, routerpid);
-    sleep(2);
+    if (netconnected_flg)
+      sleep(2);
     exit(0);
     /* NOTREACHED */
     return 0;
@@ -1039,7 +1106,7 @@ SmtpState *SS;
 	    /* If it is IPv4 mapped address to IPv6, then resolve
 	       the IPv4 address... */
 
-	    if (memcmp((void *) ip6, &zv4mapprefix, 12) == 0)
+	    if (memcmp((void *) ip6, zv4mapprefix, 12) == 0)
 		hp = gethostbyaddr(((char *) ip6) + 12, 4, AF_INET);
 	    else
 		hp = gethostbyaddr((char *) ip6, 16, AF_INET6);
@@ -1126,9 +1193,15 @@ SmtpState *SS;
 
     if (SS->s_status)
 	return SS->s_status;
+
     if (SS->s_readout >= SS->s_bufread) {
     redo:
-	rc = read(SS->inputfd, SS->s_buffer, sizeof(SS->s_buffer));
+#ifdef HAVE_OPENSSL
+        if (SS->sslmode) {
+	  rc = SSL_read(SS->ssl, SS->s_buffer, sizeof(SS->s_buffer));
+	} else
+#endif
+	  rc = read(SS->inputfd, SS->s_buffer, sizeof(SS->s_buffer));
 	if (rc < 0) {
 	  goto redo; /* XX: ??? some input-problem circumvention problem ?? */
 	  if (errno == EINTR || errno == EAGAIN)
@@ -1151,6 +1224,12 @@ SmtpState *SS;
 int s_hasinput(SS)
 SmtpState *SS;
 {
+#ifdef HAVE_OPENSSL
+    if (SS->sslmode) {
+      /* This presumes that  SSL_set_read_ahead(SS->ssl, 1)  is done! */
+      return SSL_pending(SS->ssl);
+    }
+#endif
     if (SS->s_readout >= SS->s_bufread) {
 	/* So if it did dry up, try non-blocking read */
 	int flags = fcntl(SS->inputfd, F_GETFL, 0);
@@ -1170,6 +1249,70 @@ SmtpState *SS;
     }
     return (SS->s_bufread - SS->s_readout);
 }
+
+
+int s_gets(SS, buf, buflen, rcp, cop, cp)
+SmtpState *SS;
+char *buf, *cop, *cp;
+int buflen, *rcp;
+{
+	int c, co = -1;
+	int i, rc;
+
+	rc = -1;
+
+	if (!pipeliningok || !s_hasinput(SS))
+	    typeflush(SS);
+	else
+	    /* if (verbose) */
+	if (logfp)
+	  type(NULL,0,NULL,
+	       "-- pipeline input exists %d bytes", s_hasinput(SS));
+
+	/* Alarm processing on the SMTP protocol channel */
+	alarm(SMTP_COMMAND_ALARM_IVAL);
+
+	/* Our own  fgets() -- gets also NULs, flags illegals.. */
+	i = 0;
+	--buflen;
+	while ((c = s_getc(SS)) != EOF && i < buflen) {
+	    if (c == '\n') {
+		buf[i++] = c;
+		break;
+	    } else if (co == '\r' && rc < 0)
+		rc = i;		/* Spurious CR on the input.. */
+
+	    if (c == '\0' && rc < 0)
+		rc = i;
+	    if ((c & 0x80) != 0 && rc < 0)
+		rc = i;
+	    if (c != '\r' && c != '\t' &&
+		(c < 32 || c == 127) && rc < 0)
+		rc = i;
+	    buf[i++] = c;
+	    co = c;
+	}
+	buf[i] = '\0';
+	alarm(0);		/* Cancel the alarm */
+
+	if (c == EOF && i == 0) {
+	    /* XX: ???  Uh, Hung up on us ? */
+	    if (SS->mfp != NULL)
+		mail_abort(SS->mfp);
+	    SS->mfp = NULL;
+	}
+
+	/* Zap the ending newline */
+	if (c  == '\n') buf[--i] = '\0';
+	/* Zap the possible preceeding \r */
+	if (co == '\r') buf[--i] = '\0';
+
+	*cop = co;
+	*cp  = c;
+	*rcp = rc;
+	return i;
+}
+
 
 void s_setup(SS, infd, outfp)
 SmtpState *SS;
@@ -1213,6 +1356,9 @@ int insecure;
 
     runastrusteduser();
 
+    if (!netconnected_flg)
+      strict_protocol = 0;
+
     rc = setjmp(jmpalarm);
     if (rc != 0) {
 	/* Oooo...  We are returning here via  longjmp(),
@@ -1252,7 +1398,7 @@ int insecure;
 	/* If it is IPv4 mapped address to IPv6, then resolve
 	   the IPv4 address... */
 
-	if (memcmp((void *) ip6, &zv4mapprefix, 12) == 0)
+	if (memcmp((void *) ip6, zv4mapprefix, 12) == 0)
 	    hostent = gethostbyaddr(((char *) ip6) + 12, 4, AF_INET);
 	else
 	    hostent = gethostbyaddr((char *) ip6, 16, AF_INET6);
@@ -1306,7 +1452,8 @@ int insecure;
 				  Always reject, or Always freeze.. */
       SS->policyresult = policytest(policydb, &SS->policystate,
 				    POLICY_SOURCEDOMAIN,
-				    SS->rhostname,strlen(SS->rhostname));
+				    SS->rhostname,strlen(SS->rhostname),
+				    SS->authuser);
 
     /* re-opening the log ?? */
     zopenlog("smtpserver", LOG_PID, LOG_MAIL);
@@ -1368,14 +1515,12 @@ int insecure;
     if (logfp != NULL) {
 	char *s = policymsg(policydb, &SS->policystate);
 	if (insecure)
-	    fprintf(logfp, "%d#\tremote from %s:%d\n",
-		    pid, SS->ihostaddr, SS->rport);
+	  type(NULL,0,NULL,"remote from %s:%d", SS->ihostaddr, SS->rport);
 	else
-	    fprintf(logfp, "%d#\tlocal from uid#%d\n",
-		    pid, (int)getuid());
+	  type(NULL,0,NULL,"local from uid#%d", (int)getuid());
 	if (SS->policyresult != 0 || s != NULL)
-	  fprintf(logfp, "%d#\t-- policyresult=%d initial policy msg: %s\n",
-		  pid, SS->policyresult, (s ? s : "<NONE!>"));
+	  type(NULL,0,NULL,"-- policyresult=%d initial policy msg: %s",
+	       SS->policyresult, (s ? s : "<NONE!>"));
 	fflush(logfp);
     }
     while (1) {
@@ -1383,54 +1528,14 @@ int insecure;
 	char buf[SMTPLINESIZE];	/* limits size of SMTP commands...
 				   On the other hand, limit is asked
 				   to be only 1000 chars, not 8k.. */
-	int c, co = -1;
+	char *eobuf, c, co;
 	int i;
-	char *eobuf;
 
-	rc = -1;
+	i = s_gets(SS, buf, sizeof(buf), &rc, &co, &c );
+	if (i == 0)	/* EOF ??? */
+	  break;
 
-	if (!s_hasinput(SS))
-	    typeflush(SS);
-	else
-	    /* if (verbose) */
-	if (logfp)
-	    fprintf(logfp, "%d#\t-- pipeline input exists %d bytes\n", pid, s_hasinput(SS));
-
-	/* Alarm processing on the SMTP protocol channel */
-	alarm(SMTP_COMMAND_ALARM_IVAL);
-
-	/* Our own  fgets() -- gets also NULs, flags illegals.. */
-	i = 0;
-	while ((c = s_getc(SS)) != EOF && i < (sizeof(buf) - 1)) {
-	    if (c == '\n') {
-		/* *s++ = c; *//* Don't save it! No need */
-		break;
-	    } else if (co == '\r' && rc < 0)
-		rc = i;		/* Spurious CR on the input.. */
-
-	    if (c == '\0' && rc < 0)
-		rc = i;
-	    if ((c & 0x80) != 0 && rc < 0)
-		rc = i;
-	    if (c != '\r' && c != '\t' &&
-		(c < 32 || c == 127) && rc < 0)
-		rc = i;
-	    buf[i++] = c;
-	    co = c;
-	}
-	buf[i] = '\0';
-	eobuf = &buf[i];	/* Buf end ptr.. */
-	alarm(0);		/* Cancel the alarm */
-	if (c == EOF && i == 0) {
-	    /* XX: ???  Uh, Hung up on us ? */
-	    if (SS->mfp != NULL)
-		mail_abort(SS->mfp);
-	    SS->mfp = NULL;
-	    break;
-	}
-	/* Zap the possible trailing  \r */
-	if ((eobuf > buf) && (eobuf[-1] == '\r'))
-	    *--eobuf = '\0';
+	eobuf = &buf[i-1];	/* Buf end ptr.. */
 
 	/* Chop the trailing spaces */
 	if (!strict_protocol) {
@@ -1477,9 +1582,9 @@ int insecure;
 	}
 	if ((strict_protocol && (c != '\n' || co != '\r')) || (c != '\n')) {
 	    if (i < (sizeof(buf)-1))
-	      type(SS, 500, m552, "Line not terminated with CRLF..");
+		type(SS, 500, m552, "Line not terminated with CRLF..");
 	    else
-	      type(SS, 500, m552, "Line too long (%d chars)", i);
+		type(SS, 500, m552, "Line too long (%d chars)", i);
 	    continue;
 	}
 	if (verbose && !daemon_flg)
@@ -1488,7 +1593,7 @@ int insecure;
 
 	for (cp = buf; isascii(*cp) && isalpha(*cp); ++cp)
 	    continue;
-	if (cp > buf + 6) {	/* "DEBUG" is longest of them.. */
+	if (cp > buf + 8) {	/* "DEBUG" is longest of them.. */
 	    type(SS, 550, m552, "Syntax error");
 	    typeflush(SS);
 	    continue;
@@ -1520,6 +1625,16 @@ int insecure;
 	  goto unknown_command;
 	if (SS->carp->cmd == Verify    && ! vrfycmdok)
 	  goto unknown_command;
+	if (SS->carp->cmd == Verify2   && ! vrfycmdok)
+	  goto unknown_command;
+	if (SS->carp->cmd == Hello2    && ! ehlo_ok)
+	  goto unknown_command;
+	if (SS->carp->cmd == Turnme    && ! etrn_ok)
+	  goto unknown_command;
+	if (SS->carp->cmd == Auth      && ! auth_ok)
+	  goto unknown_command;
+	if (SS->carp->cmd == BData     && ! chunkingok)
+	  goto unknown_command;
 
 	if (policystatus != 0 &&
 	    SS->carp->cmd != Quit && SS->carp->cmd != Help) {
@@ -1543,10 +1658,19 @@ int insecure;
 	    type(SS, 550, m550, "panic!");
 	    typeflush(SS);
 	    break;
+#ifdef HAVE_OPENSSL
+	case StartTLS:
+	    smtp_starttls(SS, buf, cp);
+	    break;
+#endif
 	case Hello:
 	case Hello2:
 	    /* This code is LONG.. */
 	    smtp_helo(SS, buf, cp);
+	    typeflush(SS);
+	    break;
+	case Auth:
+	    smtp_auth(SS, buf, cp);
 	    typeflush(SS);
 	    break;
 	case Mail:
@@ -1563,12 +1687,24 @@ int insecure;
 	    smtp_rcpt(SS, buf, cp);
 	    break;
 	case Data:
-	    if (smtp_data(SS, buf, cp) < 0)
-		return;
+	    if (smtp_data(SS, buf, cp) < 0) {
+#ifdef HAVE_OPENSSL
+	      if (SS->sslmode) {
+		tls_stop_servertls(SS);
+	      }
+#endif
+	      return;
+	    }
 	    break;
 	case BData:
-	    if (smtp_bdata(SS, buf, cp) < 0)
-		return;
+	    if (smtp_bdata(SS, buf, cp) < 0) {
+#ifdef HAVE_OPENSSL
+	      if (SS->sslmode) {
+		tls_stop_servertls(SS);
+	      }
+#endif
+	      return;
+	    }
 	    break;
 	case Reset:
 	    if (*cp != 0 && strict_protocol) {
@@ -1648,6 +1784,11 @@ int insecure;
 	    SS->mfp = NULL;
 	    type(SS, 221, m200, NULL, "Out");
 	    typeflush(SS);
+#ifdef HAVE_OPENSSL
+	    if (SS->sslmode) {
+	      tls_stop_servertls(SS);
+	    }
+#endif
 	    return;
 	default:
 	    break;
@@ -1659,9 +1800,14 @@ int insecure;
 	tell = lseek(0, 0, SEEK_CUR);
 	reporterr(SS, tell, "session terminated");
     } else if (logfp != NULL) {
-	fprintf(logfp, "%d-\tSession closed w/o QUIT\n", pid);
+	type(NULL,0,NULL,"Session closed w/o QUIT");
 	fflush(logfp);
     }
+#ifdef HAVE_OPENSSL
+    if (SS->sslmode) {
+	tls_stop_servertls(SS);
+    }
+#endif
 }
 
 #if 0				/* tmalloc() is in the library, isn't it ? */
@@ -1679,7 +1825,12 @@ int n;
 void typeflush(SS)
 SmtpState *SS;
 {
-    fflush(SS->outfp);
+#ifdef HAVE_OPENSSL
+    if (SS->sslmode)
+      Z_SSL_flush(SS);
+    else
+#endif
+      fflush(SS->outfp);
 }
 
 /*
@@ -1730,7 +1881,7 @@ va_dcl
     for (s = s + strlen(s); s < buf + cmdlen; ++s)
 	*s = '\0';
     buf[cmdlen] = '\0';
-    memcpy((char *) cmdline, buf, cmdlen);
+    memcpy((char *) cmdline, buf, cmdlen+1);
     va_end(ap);
 }
 
@@ -1763,8 +1914,9 @@ const char *status, *fmt, *s1, *s2, *s3, *s4, *s5, *s6;
 {
     char format[256];		/* We limit the fill to 200+some */
     const char *text = NULL;
-    char c;
-    int code = Code;
+    char c, *s;
+    int code = Code, buflen;
+    char buf[6000];
 
     if (code < 0) {
 	code = -code;
@@ -1772,17 +1924,19 @@ const char *status, *fmt, *s1, *s2, *s3, *s4, *s5, *s6;
     } else
 	c = ' ';
 
-    fprintf(SS->outfp, "%03d%c", code, c);
-    if (status && status[0] != 0)
-      fprintf(SS->outfp, "%s ", status);
-
-    if (logfp != NULL) {
-      fprintf(logfp, "%dw\t%03d%c", pid, code, c);
-      if (status && status[0] != 0)
-	fprintf(logfp, "%s ", status);
+    if (!SS)
+      *buf = 0;
+    else {
+      if (code >= 999)
+	sprintf(buf, "000%c", c);
+      else
+	sprintf(buf, "%03d%c", code, c);
+      if (enhancedstatusok && status && status[0] != 0)
+	sprintf(buf+4, "%s ", status);
     }
+    s = strlen(buf)+buf;
 
-    switch (code) {
+    switch (code && SS) {
     case 211:			/* System status */
 	text = "%s";
 	break;
@@ -1853,6 +2007,7 @@ const char *status, *fmt, *s1, *s2, *s3, *s4, *s5, *s6;
 	text = "Transaction failed";
 	break;
     }
+
 #ifdef HAVE_VPRINTF
     {
 	va_list ap;
@@ -1862,37 +2017,42 @@ const char *status, *fmt, *s1, *s2, *s3, *s4, *s5, *s6;
 	va_start(ap);
 #endif
 	if (fmt != NULL)
-	    vfprintf(SS->outfp, fmt, ap);
+	    vsprintf(s, fmt, ap);
 	else
-	    vfprintf(SS->outfp, text, ap);
-	fprintf(SS->outfp, "\r\n");
-	if (logfp != NULL) {
-	    if (fmt != NULL)
-		vfprintf(logfp, fmt, ap);
-	    else
-		vfprintf(logfp, text, ap);
-	    fprintf(logfp, "\n");
-	    fflush(logfp);
-	}
+	    vsprintf(s, text, ap);
 	va_end(ap);
     }
 #else
     if (fmt != NULL)
-	fprintf(SS->outfp, fmt, s1, s2, s3, s4, s5, s6);
+	sprintf(s, fmt, s1, s2, s3, s4, s5, s6);
     else
-	fprintf(SS->outfp, text, s1, s2, s3, s4, s5, s6);
-    fprintf(SS->outfp, "\r\n");
+	sprintf(s, text, s1, s2, s3, s4, s5, s6);
+#endif
+    s += strlen(s);
+    buflen = s - buf;
+
+    if (buflen+4 > sizeof(buf)) {
+      /* XXX: Buffer overflow ??!! Signal about it, and crash! */
+    }
     if (logfp != NULL) {
-	if (fmt != NULL)
-	    fprintf(logfp, fmt, s1, s2, s3, s4, s5, s6);
-	else
-	    fprintf(logfp, text, s1, s2, s3, s4, s5, s6);
-	fprintf(logfp, "\n");
+	fprintf(logfp, "%d%c\t%s\n", pid, (SS ? 'w' : '#'), buf);
 	fflush(logfp);
     }
+    if (!SS) return; /* Only to local log.. */
+    strcpy(s, "\r\n");
+#ifdef HAVE_OPENSSL
+    if (SS->sslmode)
+      Z_SSL_write(SS, buf, buflen+2); /* XX: check return value */
+    else
 #endif
+      fwrite(buf, buflen+2, 1, SS->outfp);
 }
 
+
+/*
+ *  type220headers() outputs the initial greeting header(s), and
+ *  does it without need for SSL wrapping.
+ */
 
 void
 type220headers(SS, identflg, xlatelang, curtime)
@@ -1990,9 +2150,10 @@ va_dcl
 {
     va_list ap;
     int maxcnt = 200;
-    int abscode;
+    int abscode, buflen;
     const char *a1, *a2, *a3, *a4;
     const char *s;
+    char buf[2000], *bp;
 
 #ifdef HAVE_STDARG_H
     va_start(ap, msg);
@@ -2008,7 +2169,9 @@ va_dcl
     msg = va_arg(ap, const char *);
 #endif
 
-    s = inbuf + 3 + strlen(status) + 1;
+    s = inbuf + 3 + 1;
+    if (enhancedstatusok)
+      s += strlen(status);
 
     /* These are not always safe... but they should be ok
        if we are carrying  (char*)s or (int)s.. */
@@ -2019,18 +2182,33 @@ va_dcl
 
     abscode = (code < 0) ? -code : code;
 
-    fprintf(SS->outfp, "%03d-%s ", abscode, status);
-    if (logfp != NULL)
-	fprintf(logfp, "%dw\t%03d-%s ", pid, abscode, status);
-    while (s < rfc821_error_ptr && --maxcnt >= 0) {
+    if (multilinereplies) {
+      if (enhancedstatusok) {
+	sprintf(buf, "%03d-%s ", abscode, status);
+      } else { /* No status codes */
+	sprintf(buf, "%03d- ", abscode);
+      }
+      bp = buf + strlen(buf);
+      while (s < rfc821_error_ptr && --maxcnt >= 0) {
 	++s;
-	putc(' ', SS->outfp);
-	if (logfp != NULL)
-	    putc(' ', logfp);
+	*bp++ = ' ';
+      }
+      *bp++ = '^';
+      *bp = 0;
+
+      buflen = bp - buf;
+
+      if (logfp != NULL)
+	fprintf(logfp, "%dw\t%s\n", pid, buf);
+
+      strcpy(bp, "\r\n");
+#ifdef HAVE_OPENSSL
+      if (SS->sslmode) {
+	Z_SSL_write(SS, buf, buflen+2); /* XX: check return value */
+      } else
+#endif
+	fwrite(buf, buflen+2, 1, SS->outfp);
     }
-    fprintf(SS->outfp, "^\r\n");
-    if (logfp != NULL)
-	fprintf(logfp, "^\n");
 
     type(SS, code, status, msg, a1, a2, a3, a4);
 
