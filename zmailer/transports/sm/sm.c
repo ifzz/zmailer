@@ -645,7 +645,8 @@ deliver(dp, mp, startrp, endrp, verboselog)
 	  case 8:		/* 8BIT */
 	    if (!can_8bit && !ascii_clean) {
 	      convertmode = _CONVERT_QP;
-	      downgrade_headers(startrp, convertmode, verboselog);
+	      if (!downgrade_headers(startrp, convertmode, verboselog))
+		convertmode = _CONVERT_NONE;
 	    }
 	    break;
 	  case 9:		/* QUOTED-PRINTABLE */
@@ -653,7 +654,8 @@ deliver(dp, mp, startrp, endrp, verboselog)
 	      /* Force(d) to decode Q-P while transfer.. */
 	      convertmode = _CONVERT_8BIT;
 	      /*  UPGRADE TO 8BIT !  */
-	      qp_to_8bit(startrp);
+	      if (!qp_to_8bit(startrp))
+		convertmode = _CONVERT_NONE;
 	      content_kind = 10;
 	      ascii_clean = 0;
 	    }
@@ -670,9 +672,12 @@ deliver(dp, mp, startrp, endrp, verboselog)
  	/* Add the "Return-Path:" is it is desired, but does not yet
 	   exist.. */
 	if (mp->flags & MO_RETURNPATH) {
-	  char **hdrs = has_header(startrp,"Return-Path:");
 	  const char *uu = startrp->addr->link->user;
-	  if (hdrs) delete_header(startrp, hdrs);
+	  char **hdrs;
+	  do {
+	    hdrs = has_header(startrp,"Return-Path:");
+	    if (hdrs) delete_header(startrp, hdrs);
+	  } while (hdrs);
 	  if (strcmp(startrp->addr->link->channel,"error")==0)
 	    uu = "";
 	  append_header(startrp,"Return-Path: <%.999s>", uu);
@@ -691,7 +696,8 @@ deliver(dp, mp, startrp, endrp, verboselog)
 	}
 
 	/* append message body itself */
-	if ((i = appendlet(dp, mp, tafp, verboselog, convertmode)) != EX_OK) {
+	i = appendlet(dp, mp, tafp, verboselog, convertmode);
+	if (i != EX_OK) {
 	  for (rp = startrp; rp != endrp; rp = rp->next) {
 	    notaryreport(rp->addr->user,"failed",
 			 /* Could indicate: 4.3.1 - mail system full ?? */
@@ -849,10 +855,8 @@ appendlet(dp, mp, fp, verboselog, convertmode)
 #if !(defined(HAVE_MMAP) && defined(TA_USE_MMAP))
 	  char iobuf[BUFSIZ];
 	  FILE *mfp = fdopen(mfd,"r");
-
-	  fseek(mfp,(off_t)(dp->msgbodyoffset),SEEK_SET);
-
 	  setvbuf(mfp, iobuf, _IOFBF, sizeof(iobuf));
+	  fseek(mfp, dp->msgbodyoffset, SEEK_SET);
 
 #define MFPCLOSE i = dup(mfd); fclose(mfp); dup2(i,mfd); close(i);
 
@@ -866,7 +870,7 @@ appendlet(dp, mp, fp, verboselog, convertmode)
 	  /*
 	     if(verboselog) fprintf(verboselog,
 	     "sm: Convert mode: %d, fd=%d, fdoffset=%d, bodyoffset=%d\n",
-	     convertmode, mfd, (int)lseek(mfd,(off_t)0,1),
+	     convertmode, mfd, (int)lseek(mfd, (off_t)0, SEEK_CUR),
 	     dp->msgbodyoffset);
 	   */
 
@@ -1314,7 +1318,7 @@ struct ctldesc *dp;
 	    if (errno == EINTR)
 	      continue;
 	    readalready = 0;
-	    lseek(mfd,dp->msgbodyoffset,0);
+	    lseek(mfd, dp->msgbodyoffset, SEEK_SET);
 	    return 0;
 	  }
 	  lastwasnl = (let_buffer[i-1] == '\n');
@@ -1322,14 +1326,14 @@ struct ctldesc *dp;
 	  bufferfull++;
 	  for (i=0; i < readalready; ++i)
 	    if (128 & (let_buffer[i])) {
-	      lseek(mfd,dp->msgbodyoffset,0);
+	      lseek(mfd, dp->msgbodyoffset, SEEK_SET);
 	      /* We propably have not read everything of the file! */
 	      readalready = 0;
 	      return 0;		/* Not clean ! */
 	    }
 	}
 	/* Got to EOF, and still it is clean 7-BIT! */
-	lseek(mfd,dp->msgbodyoffset,0);
+	lseek(mfd, dp->msgbodyoffset, SEEK_SET);
 
 	if (bufferfull > 1)	/* not all in memory, need to reread */
 	  readalready = 0;

@@ -117,7 +117,6 @@ extern struct header	*erraddress __((struct envelope *e));
 extern void	defer __((struct envelope *e, const char *why));
 extern struct header	*mkSender __((struct envelope *e, const char *name, int flag));
 extern struct header	*mkTrace __((struct envelope *e));
-extern int	nullhost __((const char *s));
 extern conscell	*pickaddress __((conscell *l));
 extern int	thesender __((struct envelope *e, struct address *a));
 extern conscell	*makequad __((void));
@@ -166,7 +165,7 @@ extern int   savefile;
 extern int   do_hdr_warning;
 
 /* File: rtsyslog.c */
-extern void rtsyslog __(( time_t msgmtime, const char *msgfile, const char *from, const char *smtprelay, int size, int nrcpts, const char *msgid ));
+extern void rtsyslog __(( time_t msgmtime, long msgino, const char *from, const char *smtprelay, int size, int nrcpts, const char *msgid ));
 
 extern int	main __((int argc, const char *argv[]));
 extern int	login_to_uid __((const char *name));
