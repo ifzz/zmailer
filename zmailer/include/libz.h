@@ -79,6 +79,7 @@ extern void hp_addr_randomize __((struct hostent *hp));
 
 /* killprev.c */
 extern int killprevious   __((int sig, const char *pidfil));
+extern int killpidfile    __((const char *pidfil));
 
 /* linebuffer.c */
 extern char *linebuf;
@@ -114,10 +115,6 @@ extern char *rfc822date __((time_t *timep));
 /* rfc822scan.c */
 extern int  hdr_status __((const char *cp, const char *lbuf, int n, int octo));
 #ifdef Z_TOKEN_H
-extern u_long _hdr_compound __((const char *cp, long n, int cstart, int cend,
-				TokenType type, token822 *tp,
-				token822 **tlist, token822 **tlistp));
-extern const char *_unfold __((const char *start, const char *end, token822 *t));
 extern token822 * scan822 __((const char **cpp, size_t n, int c1, int c2,
 				  int allowcomments, token822 **tlistp));
 #endif
@@ -151,8 +148,8 @@ extern int strmatch __((const char *pattern, const char *term));
 /* symbol.c */
 /* include "splay.h" ! */
 
-/* taspoolid.c */
-extern void taspoolid __((char *buf, int len, time_t mtime, const char *fn));
+/* taspoolid.c */ /* Minimum buffer size: 32 bytes ! */
+extern void taspoolid __((char *buf, time_t mtime, long inodenum));
 
 /* token.c */
 #ifdef Z_TOKEN_H

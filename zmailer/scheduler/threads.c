@@ -12,6 +12,7 @@
 #include "prototypes.h"
 #include <ctype.h>
 #include <unistd.h>
+#include "zsyslog.h"
 /* #include <stdlib.h> */
 
 /*
@@ -20,6 +21,9 @@
    programs started for any member thread can be shared among
    their members.
 */
+
+
+#define MAX_HUNGER_AGE 600 /* Sign of an error ... */
 
 
 struct thread      *thread_head = NULL;
@@ -658,16 +662,16 @@ web_disentangle(vp, ok)
 	  delete_thread(vp->thread, ok);
 }
 
-static int vtx_ctime_cmp __((const void *, const void *));
-static int vtx_ctime_cmp(ap, bp)
+static int vtx_mtime_cmp __((const void *, const void *));
+static int vtx_mtime_cmp(ap, bp)
      const void *ap, *bp;
 {
 	const struct vertex **a = (const struct vertex **)ap;
 	const struct vertex **b = (const struct vertex **)bp;
 
-	if ((*a)->cfp->ctime < (*b)->cfp->ctime)
+	if ((*a)->cfp->mtime < (*b)->cfp->mtime)
 	  return -1;
-	else if ((*a)->cfp->ctime == (*b)->cfp->ctime)
+	else if ((*a)->cfp->mtime == (*b)->cfp->mtime)
 	  return 0;
 	else
 	  return 1;
@@ -684,7 +688,7 @@ struct thread *thr;
 	static struct vertex **ur_arr  = NULL;
 
 	/* Randomize the order of vertices in processing, OR
-	   sort them by spool-file CTIME, if the thread has
+	   sort them by spool-file MTIME, if the thread has
 	   AGEORDER -flag set. */
 
 	/* 1) Create storage array for the vertex re-arrange */
@@ -706,9 +710,9 @@ struct thread *thr;
 
 	/* 3) re-arrange pointers */
 	if (thr->thgrp->ce.flags & CFG_AGEORDER) {
-	  /* ctime order */
+	  /* mtime order */
 	  if (n > 1)
-	    qsort((void*)ur_arr, n, sizeof(struct vertex *), vtx_ctime_cmp);
+	    qsort((void*)ur_arr, n, sizeof(struct vertex *), vtx_mtime_cmp);
 	} else
 	  /* Random order */
 	  for (i = 0; i < n; ++i) {
@@ -843,7 +847,7 @@ struct thread *thr;
 
 	  /* Clean vertices 'proc'-pointers,  randomize the
 	     order of thread vertices  (or sort by spool file
-	     ctime, if in AGEORDER..) */
+	     mtime, if in AGEORDER..) */
 	  thread_vertex_shuffle(thr);
 
 	  thr->attempts += 1;
@@ -935,7 +939,7 @@ struct thread *thr;
 	
 	/* Clean vertices 'proc'-pointers,  randomize the
 	   order of thread vertices  (or sort by spool file
-	   ctime, if in AGEORDER..) */
+	   mtime, if in AGEORDER..) */
 	thread_vertex_shuffle(thr);
 
 	rc = start_child(thr->vertices,
@@ -1070,7 +1074,7 @@ int ok, justfree;
 
 	  /* Clean vertices 'proc'-pointers,  randomize the
 	     order of thread vertices  (or sort by spool file
-	     ctime, if in AGEORDER..) */
+	     mtime, if in AGEORDER..) */
 	  thread_vertex_shuffle(thr);
 
 	  thr->attempts += 1;
@@ -1415,14 +1419,65 @@ idle_cleanup()
 	int thg_once = 1;
 	int freecount = 0;
 
-if (verbose) printf("idle_cleanup()\n");
+	mytime(&now);
 
-	if (idleprocs == 0) return 0; /* If no idle ones, no cleanup.. */
+	if (verbose) printf("idle_cleanup()\n");
 
 	while (thrg_root != NULL && (thg_once || thg != thrg_root)) {
 
 	  struct threadgroup *thgn = thg->next;
 	  thg_once = 0;
+
+	  if (thg->thread != NULL) {
+	    int idlecnt = 0;
+	    int newidlecnt = 0;
+	    struct procinfo *p;
+	    struct thread *thr;
+	    
+	    /* Clean-up faulty client  --  KLUDGE :-(  --  OF=0, HA > much */
+
+	    for ( thr = thg->thread; thr != NULL; thr = thr->nextthg) {
+	      p = thr->proc;
+	      if (thr->thgrp != thg) /* Not of this group ? */
+		continue; /* Next! */
+	      if (!p) /* No process */
+		continue;
+	      if ((p->cmdlen == 0) && (p->overfed == 0) && (p->tofd >= 0) &&
+		  (p->hungertime != 0) && (p->hungertime + MAX_HUNGER_AGE <= now)) {
+
+		/* Close the command channel, let it die itself.
+		   Rest of the cleanup happens via mux() service. */
+		if (verbose)
+		  printf("idle_cleanup() killing TA on tofd=%d pid=%d\n",
+			 p->tofd, (int)p->pid);
+
+		thr->wakeup = now-1; /* reschedule immediately! */
+
+		write(p->tofd,"\n",1);
+		pipes_shutdown_child(p->tofd);
+		p->tofd = -1;
+#if 0
+		p->thg        = NULL;
+		p->thread     = NULL;
+
+		--numkids;
+		++freecount;
+
+		/* The thread-group can be deleted before reclaim() runs! */
+		thg->transporters -= 1;
+#endif
+		zsyslog((LOG_EMERG,"ZMailer scheduler kludge shutdown of TA channel (info for debug only); %s/%s/%d HA=%ds",
+			 thr->channel, thr->host, thr->thgrp->withhost,
+			 now - p->hungertime));
+	      }
+	    }
+	    if (thg->thread == NULL && thg->idleproc == NULL) {
+	      /* No threads, no idle processes! Delete it! */
+	      delete_threadgroup(thg);
+	    }
+	  }
+
+	  if (idleprocs == 0) return 0; /* If no idle ones, no cleanup.. */
 
 	  if (thg->idleproc != NULL) {
 	    int idlecnt = 0;
@@ -1434,8 +1489,8 @@ if (verbose) printf("idle_cleanup()\n");
 
 	    while (p != NULL) {
 	      ++idlecnt;
-	      if (thg->cep->idlemax + p->hungertime < now &&
-		  p->cmdlen == 0) {
+	      if ((thg->cep->idlemax + p->hungertime < now) &&
+		  (p->cmdlen == 0) && (p->tofd >= 0)) {
 		/* It is old enough -- ancient, one might say.. */
 
 		/* Close the command channel, let it die itself.
@@ -1446,18 +1501,20 @@ if (verbose) printf("idle_cleanup()\n");
 		write(p->tofd,"\n",1);
 		pipes_shutdown_child(p->tofd);
 		p->tofd       = -1;
-		p->thg        = NULL;
-		p->thread     = NULL;
+
 		thg->idlecnt -= 1;
 		--idleprocs;
 		++freecount;
 		/* The thread-group can be deleted before reclaim() runs! */
 		thg->transporters -= 1;
+#if 1
 		--numkids;
+		p->thg        = NULL;
+		p->thread     = NULL;
+#endif
 
 		/* Remove this entry from the chain, and move to a next one */
 		p = *pp = p->next;
-
 	      } else {
 		++newidlecnt;
 		/* Move to the next possible idle process */
@@ -1485,8 +1542,8 @@ struct thread *th;
 
 	vp = th->vertices;
 	while (vp) {
-	  if (vp->cfp->ctime < oo)
-	    oo = vp->cfp->ctime;
+	  if (vp->cfp->mtime < oo)
+	    oo = vp->cfp->mtime;
 	  vp = vp->nextitem;
 	}
 	return (now - oo);
@@ -1610,6 +1667,14 @@ int fullmode;
 	saytime((long)(now - sched_starttime), timebuf, 1);
 	fprintf(fp,"Kids: %d  Idle: %2d  Msgs: %3d  Thrds: %3d  Rcpnts: %4d  Uptime: %s\n",
 		numkids, idleprocs, global_wrkcnt, threadsum, jobtotal, timebuf);
+	fprintf(fp, "Msgs in %lu out %lu stored %lu ",
+		(u_long)MIBMtaEntry->mtaReceivedMessagesSc,
+		(u_long)MIBMtaEntry->mtaTransmittedMessagesSc,
+		(u_long)MIBMtaEntry->mtaStoredMessages);
+	fprintf(fp, "Rcpnts in %lu out %lu stored %lu\n",
+		(u_long)MIBMtaEntry->mtaReceivedRecipientsSc,
+		(u_long)MIBMtaEntry->mtaTransmittedRecipientsSc,
+		(u_long)MIBMtaEntry->mtaStoredRecipients);
 }
 
 int thread_count_recipients()
