@@ -33,5 +33,4 @@
 #	-f logfile	- save messages to logfile [optional]
 #	%s		- must follow other options at the end of the line
 #
-#DEFAULT			$CVSROOT/CVSROOT/log -s -m sparclinux-cvs@caipfs.rutgers.edu -f $CVSROOT/CVSROOT/commitlog  %s
-ALL			$CVSROOT/CVSROOT/log_accum2 -m sparclinux-cvs@caipfs.rutgers.edu -f $CVSROOT/CVSROOT/ChangeLog -s %s
+ALL			$CVSROOT/CVSROOT/log_accum2 -m sparclinux-cvs@vger.rutgers.edu -f $CVSROOT/CVSROOT/ChangeLog -s %s
