@@ -1,0 +1,26 @@
+#
+# APOP-like authentication control file for the ZMailer scheduler.
+#
+# Fields are double-colon (':') separated, and are:
+#   - Username
+#   - PLAINTEXT PASSWORD (which must not have double-colon in it!)
+#   - Enabled attributes (tokens, space separated)
+#
+# Default-account for 'mailq' is 'nobody' with password 'nobody'.
+# Third field is at the moment a WORK IN PROGRESS!
+#
+# SECURITY NOTE:
+#   OWNER:      root
+#   PROTECTION: 0600
+#
+# Attribute tokens:
+#	ALL	well, a wild-card enabling everything
+#	SNMP	"SHOW SNMP"
+#	QQ	"SHOW QUEUE SHORT"
+#	TT	"SHOW QUEUE THREADS", "SHOW THREAD channel/host"
+#	ETRN	"START THREAD channel host"
+#	KILL	"KILL THREAD channel host", "KILL MSG spoolid"
+#
+nobody:nobody:SNMP ETRN
+#watcher:zzzzz:SNMP QQ TT ETRN
+#root:zzzzzzz:ALL

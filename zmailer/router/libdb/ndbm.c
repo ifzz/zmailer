@@ -35,7 +35,7 @@ open_ndbm(sip, flag, comment)
 	symid = symbol_db(sip->file, spt_files->symbols);
 	spl = sp_lookup(symid, spt_files);
 	if (spl != NULL && flag == O_RDWR && spl->mark != O_RDWR)
-		close_ndbm(sip);
+		close_ndbm(sip,"open_ndbm");
 	if (spl == NULL || (db = (DBM *)spl->data) == NULL) {
 		for (i = 0; i < 3; ++i) {
 		  db = dbm_open(sip->file, flag, 0);
@@ -71,7 +71,6 @@ search_ndbm(sip)
 	datum val, key;
 	conscell *tmp;
 	int retry;
-	char *us;
 
 	retry = 0;
 
@@ -87,21 +86,20 @@ reopen:
 	if (val.dptr == NULL) {
 #ifdef HAVE_DBM_ERROR
 	  if (!retry && dbm_error(db)) {
-	    close_ndbm(sip);
+	    close_ndbm(sip,"search_ndbm");
 	    ++retry;
 	    goto reopen;
 	  }
 #else
 	  if (!retry && errno != 0) {
-	    close_ndbm(sip);
+	    close_ndbm(sip,"search_ndbm");
 	    ++retry;
 	    goto reopen;
 	  }
 #endif
 	  return NULL;
 	}
-	us = strnsave(val.dptr, val.dsize);
-	return newstring(us);
+	return newstring(dupnstr(val.dptr, val.dsize), val.dsize);
 }
 
 /*
@@ -109,8 +107,9 @@ reopen:
  */
 
 void
-close_ndbm(sip)
+close_ndbm(sip,comment)
 	search_info *sip;
+	const char *comment;
 {
 	DBM *db;
 	struct spblk *spl;
@@ -146,9 +145,9 @@ add_ndbm(sip, value)
 	if (db == NULL)
 		return EOF;
 
-	key.dptr  = (const void*) sip->key;	/* Sigh.. the cast.. */
+	key.dptr  = (void*) sip->key;	/* Sigh.. the cast.. */
 	key.dsize = strlen(sip->key) + 1;
-	val.dptr  = (const void*) value;	/* Sigh.. the cast.. */
+	val.dptr  = (void*) value;	/* Sigh.. the cast.. */
 	val.dsize = strlen(value) + 1;
 	if (dbm_store(db, key, val, DBM_REPLACE) < 0) {
 		++deferit;
@@ -175,7 +174,7 @@ remove_ndbm(sip)
 	if (db == NULL)
 		return EOF;
 
-	key.dptr  = (const void*) sip->key;	/* Sigh.. the cast.. */
+	key.dptr  = (void*) sip->key;	/* Sigh.. the cast.. */
 	key.dsize = strlen(sip->key) + 1;
 	if (dbm_delete(db, key) < 0) {
 		++deferit;

@@ -1,6 +1,6 @@
 /*	Prototypes of ZMailer Scheduler component routines	*/
 /*
- *	Copyright Matti Aarnio <mea@nic.funet.fi> 1995
+ *	Copyright Matti Aarnio <mea@nic.funet.fi> 1995-1999
  */
 
 #ifndef __
@@ -52,6 +52,9 @@ extern const char *replhost;
 extern const char *replchannel;
 extern int  nobody;
 extern int  sweepinterval;
+extern char *mq2authfile;
+extern char *mailqsock;
+
 
 /* msgerror.c */
 extern void msgerror __((struct vertex *vp, long offset, const char *message));
@@ -122,6 +125,7 @@ extern int   idleprocs;
 extern void  web_disentangle __((struct vertex *vp, int ok));
 extern void  reschedule __((struct vertex *vp, int factor, int index));
 extern void  thread_reschedule __((struct thread *, time_t, int index));
+extern void  mq2_thread_report __((struct mailq *mq, int mqmode));
 
 /* transport.c */
 extern struct procinfo *cpids;
@@ -150,12 +154,23 @@ extern void expire __((struct vertex *, int));
 /* wantconn.c */
 extern int wantconn __(( int sock, const char *prgname ));
 
+/* mailq.c */
 extern int isalive __(( const char *pidfil, int *pidp, FILE **fpp ));
 extern void docat __(( const char *file, int fd ));
 extern void printaddrs __(( struct vertex *v ));
 extern void checkrouter __(( void ));
 extern void checkscheduler __(( void ));
-extern void report __(( FILE *fp ));
+extern void report __(( FILE *fpi, FILE *fpo ));
 
 /* Transport library */
-/* extern int lockaddr __((int, char *, long, int, int)); */
+/* extern int lockaddr __((int, char *, int, int, int)); */
+
+/* mq2.c */
+extern int mq2add_to_mask __((fd_set *rdmaskp, fd_set *wrmaskp, int));
+extern void mq2_register __((int fd));
+extern void mq2_areinsets __((fd_set *rdmaskp, fd_set *wrmaskp));
+extern int  mq2_puts __((struct mailq *, char *s));
+extern int  mq2_putc __((struct mailq *, int c));
+
+/* mq2auth.c */
+extern void mq2auth __((struct mailq *, char *));

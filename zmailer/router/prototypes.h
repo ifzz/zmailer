@@ -117,7 +117,6 @@ extern struct header	*erraddress __((struct envelope *e));
 extern void	defer __((struct envelope *e, const char *why));
 extern struct header	*mkSender __((struct envelope *e, const char *name, int flag));
 extern struct header	*mkTrace __((struct envelope *e));
-extern int	nullhost __((const char *s));
 extern conscell	*pickaddress __((conscell *l));
 extern int	thesender __((struct envelope *e, struct address *a));
 extern conscell	*makequad __((void));
@@ -138,8 +137,8 @@ extern void	hdr_print __((struct header *h, FILE *fp));
 extern int	hdr_nilp __((struct header *h));
 extern void	pureAddress __((FILE *fp, struct addr *pp));
 extern int	pureAddressBuf __((char *buf, int len, struct addr *pp));
-extern int	printAddress __((FILE *fp, struct addr *pp, int onlylength));
-extern int	printLAddress __((FILE *fp, struct addr *pp, int col));
+extern int	printAddress __((FILE *fp, struct addr *pp, int col));
+extern int	printLAddress __((FILE *fp, struct addr *pp, int col, int foldcol, int nofold));
 extern char    *saveAddress __((struct addr *pp));
 extern void	errprint __((FILE *fp, struct addr *pp, int hdrlen));
 extern HeaderStamp hdr_type __((struct header *h));
@@ -166,7 +165,7 @@ extern int   savefile;
 extern int   do_hdr_warning;
 
 /* File: rtsyslog.c */
-extern void rtsyslog __(( time_t msgmtime, const char *msgfile, const char *from, const char *smtprelay, int size, int nrcpts, const char *msgid ));
+extern void rtsyslog __(( time_t msgmtime, long msgino, const char *from, const char *smtprelay, int size, int nrcpts, const char *msgid ));
 
 extern int	main __((int argc, const char *argv[]));
 extern int	login_to_uid __((const char *name));

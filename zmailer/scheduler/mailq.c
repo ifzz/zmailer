@@ -4,7 +4,7 @@
  */
 /*
  *	Lots of modifications (new guts, more or less..) by
- *	Matti Aarnio <mea@nic.funet.fi>  (copyright) 1992-1995
+ *	Matti Aarnio <mea@nic.funet.fi>  (copyright) 1992-1999
  */
 
 /*
@@ -22,10 +22,13 @@
 #include <sys/stat.h>
 #include <sys/param.h>
 #include <pwd.h>
+#include <stdlib.h>
 #include "mail.h"
 #include "scheduler.h"
-#include "malloc.h"
+#include "zmalloc.h"
 #include "mailer.h"
+
+#include "md5.h"
 
 #ifdef HAVE_DIRENT_H
 # include <dirent.h>
@@ -51,6 +54,9 @@
 #include <fcntl.h>
 #include <sys/file.h>
 #endif	/* HAVE_SOCKET */
+#ifdef HAVE_SYS_UN_H
+#include <sys/un.h>
+#endif
 
 #ifdef	MALLOC_TRACE
 struct conshell *envarlist = NULL;
@@ -74,6 +80,11 @@ extern char *strchr(), *strrchr();
 const char	*progname;
 const char	*postoffice;
 
+static char *port = NULL;
+
+char * v2username = "nobody";
+char * v2password = "nobody";
+
 int	debug, verbose, summary, user, status, onlyuser, nonlocal, schedq;
 int	sawcore, othern;
 
@@ -83,6 +94,8 @@ extern char *optarg;
 extern int   optind;
 char	path[MAXPATHLEN];
 
+char *host = NULL;
+
 int
 main(argc, argv)
 	int argc;
@@ -91,9 +104,7 @@ main(argc, argv)
 	int fd, c, errflg, eval;
 	struct passwd *pw;
 #ifdef	AF_INET
-	short port = 0;
 	struct in_addr naddr;
-	char *host = NULL;
 	struct hostent *hp = NULL, he;
 	struct sockaddr_in sad;
 	struct servent *serv = NULL;
@@ -120,13 +131,9 @@ main(argc, argv)
 	    if (verbose == 0)
 	      ++verbose;
 	    break;
-#ifdef	AF_INET
+#if defined(AF_INET) || defined(AF_UNIX)
 	  case 'p':
-	    if ((port = (short)atoi(optarg)) <= 0) {
-	      fprintf(stderr, "%s: illegal port: %s\n", progname, optarg);
-	      ++errflg;
-	    } else
-	      port = htons(port);
+	    port = optarg;
 	    break;
 #else  /* !AF_INET */
 	  case 'r':
@@ -197,116 +204,158 @@ main(argc, argv)
 	  postoffice = POSTOFFICE;
 
 	sprintf(path, "%s/%s", postoffice, PID_SCHEDULER);
+
 	errno = 0;
-#ifdef	AF_INET
-	nonlocal = 0; /* Claim it to be: "localhost" */
 
-	if (status < 2 || summary) {
+#if defined(AF_UNIX) && defined(HAVE_SYS_UN_H)
+	if (port && *port == '/') {
+	  struct sockaddr_un sun;
 
-	  if (port == 0 && (serv = getservbyname("mailq", "tcp")) == NULL) {
-	    fprintf(stderr, "%s: cannot find 'mailq' tcp service\n", progname);
-	    exit(EX_TEMPFAIL);
-	  } else if (port == 0)
-	    port = serv->s_port;
-
-	  if (host == NULL) {
-	    host = getzenv("MAILSERVER");
-	    if ((host == NULL || *host == '\n')
-		&& (host = whathost(path)) == NULL) {
-	      if (status > 0) {
-		host = "127.0.0.1"; /* "localhost" */
-		nonlocal = 0;
-	      } else {
-		if (whathost(postoffice)) {
-		  fprintf(stderr, "%s: %s is not active", progname, postoffice);
-		  fprintf(stderr, " (\"%s\" does not exist)\n", path);
-		} else
-		  fprintf(stderr, "%s: cannot find postoffice host\n", progname);
-		exit(EX_OSFILE);
-	      }
-	    }
+	  if (status) {
+	    checkrouter();
+	    checkscheduler();
+	    if (status > 1 && !summary)
+	      exit(0);
 	  }
-	  hp = gethostbyname(host);
-	  if (hp == NULL) {
-	    if (inet_pton(AF_INET, host, &naddr.s_addr) == 1) {
-	      hp = gethostbyaddr((void*)&naddr, sizeof(naddr), AF_INET);
-	      if (hp == NULL){
-		hp = &he;
-		he.h_name = host;
-		he.h_length = 4;
-	      }
-	    } else if (hp == NULL) {
-	      fprintf(stderr, "%s: cannot find address of %s\n", progname, host);
-	      exit(EX_UNAVAILABLE);
-	    }
-	  }
-	  if (strcmp(host, "localhost") != 0 &&
-	      strcmp(host, "127.0.0.1") != 0) {
-	    printf("[%s]\n", hp->h_name);
-	    nonlocal = 1;
-	  } else
-	    nonlocal = 0;	/* "localhost" is per default a "local" */
-	}
-	if (status) {
-	  checkrouter();
-	  checkscheduler();
-	  if (status > 1 && !summary)
-	    exit(0);
-	}
-	/* try grabbing a port */
-	fd = socket(AF_INET, SOCK_STREAM, 0);
-	if (fd < 0) {
-	  fprintf(stderr, "%s: ", progname);
-	  perror("socket");
-	  exit(EX_UNAVAILABLE);
-	}
-	sad.sin_family = AF_INET;
-	if (hp == &he)
-	  sad.sin_addr.s_addr = htonl(naddr.s_addr);
-	else {
-	  char *addr;
 
-	  eval = EFAULT;
-	  hp_init(hp);
-	  while ((addr = *hp_getaddr()) != NULL) {
-	    sad.sin_addr.s_addr = 0;
-	    sad.sin_port = htons((short)0);
-	    if (bind(fd, (void*)&sad, sizeof sad) < 0) {
-	      fprintf(stderr, "%s: ", progname);
-	      perror("bind");
-	      exit(EX_UNAVAILABLE);
-	    }
-	    sad.sin_port = port;
-	    memcpy((void*)&sad.sin_addr, addr, hp->h_length);
-	    if (connect(fd, (void*)&sad, sizeof sad) < 0) {
-	      eval = errno;
-	      fprintf(stderr, "%s: connect failed to %s", progname,
-		      dottedquad(&sad.sin_addr));
-	      if ((addr = *hp_nextaddr()) != NULL) {
-		memcpy((char *)&sad.sin_addr, addr, hp->h_length);
-		fprintf(stderr, ", trying %s...\n", dottedquad(&sad.sin_addr));
-	      } else
-		putc('\n', stderr);
-	      close(fd);
-	      if ((fd = socket(AF_INET, SOCK_STREAM, 0)) < 0){
-		fprintf(stderr, "%s: ", progname);
-		perror("socket");
-		exit(EX_UNAVAILABLE);
-	      }
-	      continue;
-	    }
-	    break;
-	  }
-	  if (*hp_getaddr() == NULL) {
+	  /* try grabbing a port */
+	  fd = socket(PF_UNIX, SOCK_STREAM, 0);
+	  if (fd < 0) {
 	    fprintf(stderr, "%s: ", progname);
-	    errno = eval;
-	    perror("connect");
-	    fprintf(stderr, "%s: unable to contact scheduler on %s\n",
-		    progname, hp->h_name);
+	    perror("socket");
 	    exit(EX_UNAVAILABLE);
 	  }
+
+	  sun.sun_family = AF_UNIX;
+	  strncpy(sun.sun_path, port, sizeof(sun.sun_path));
+	  sun.sun_path[ sizeof(sun.sun_path) ] = 0;
+
+	  if (connect(fd, (void*)&sun, sizeof sun) < 0) {
+	    fprintf(stderr,"%s: connect failed to path: '%s'\n",progname,sun.sun_path);
+	    exit(EX_UNAVAILABLE);
+	  }
+
+	  docat((char *)NULL, fd);
 	}
-	docat((char *)NULL, fd);
+#endif
+#ifdef	AF_INET
+	if (!port || (port && *port != '/')) {
+
+	  int portnum = 174;
+	  nonlocal = 0; /* Claim it to be: "localhost" */
+
+	  if (status < 2 || summary) {
+
+	    if (port && isdigit(*port)) {
+	      portnum = atol(port);
+	    } else if (port == NULL &&
+		       (serv = getservbyname(port ? port : "mailq", "tcp")) == NULL) {
+
+	      fprintf(stderr,"%s: cannot find 'mailq' tcp service\n",progname);
+
+	    } else if (port == 0)
+	      
+	      portnum = ntohs(serv->s_port);
+
+	    if (host == NULL) {
+	      host = getzenv("MAILSERVER");
+	      if ((host == NULL || *host == '\n')
+		  && (host = whathost(path)) == NULL) {
+		if (status > 0) {
+		  host = "127.0.0.1"; /* "localhost" */
+		  nonlocal = 0;
+		} else {
+		  if (whathost(postoffice)) {
+		    fprintf(stderr, "%s: %s is not active", progname, postoffice);
+		    fprintf(stderr, " (\"%s\" does not exist)\n", path);
+		  } else
+		    fprintf(stderr, "%s: cannot find postoffice host\n", progname);
+		  exit(EX_OSFILE);
+		}
+	      }
+	    }
+	    hp = gethostbyname(host);
+	    if (hp == NULL) {
+	      if (inet_pton(AF_INET, host, &naddr.s_addr) == 1) {
+		hp = gethostbyaddr((void*)&naddr, sizeof(naddr), AF_INET);
+		if (hp == NULL){
+		  hp = &he;
+		  he.h_name = host;
+		  he.h_length = 4;
+		}
+	      } else if (hp == NULL) {
+		fprintf(stderr, "%s: cannot find address of %s\n", progname, host);
+		exit(EX_UNAVAILABLE);
+	      }
+	    }
+	    if (strcmp(host, "localhost") != 0 &&
+		strcmp(host, "127.0.0.1") != 0) {
+	      printf("[%s]\n", hp->h_name);
+	      nonlocal = 1;
+	    } else
+	      nonlocal = 0;	/* "localhost" is per default a "local" */
+	  }
+	  if (status) {
+	    checkrouter();
+	    checkscheduler();
+	    if (status > 1 && !summary)
+	      exit(0);
+	  }
+	  /* try grabbing a port */
+	  fd = socket(PF_INET, SOCK_STREAM, 0);
+	  if (fd < 0) {
+	    fprintf(stderr, "%s: ", progname);
+	    perror("socket");
+	    exit(EX_UNAVAILABLE);
+	  }
+	  sad.sin_family = AF_INET;
+	  if (hp == &he)
+	    sad.sin_addr.s_addr = htonl(naddr.s_addr);
+	  else {
+	    char *addr;
+
+	    eval = EFAULT;
+	    hp_init(hp);
+	    while ((addr = *hp_getaddr()) != NULL) {
+	      sad.sin_addr.s_addr = 0;
+	      sad.sin_port = htons((short)0);
+	      if (bind(fd, (void*)&sad, sizeof sad) < 0) {
+		fprintf(stderr, "%s: ", progname);
+		perror("bind");
+		exit(EX_UNAVAILABLE);
+	      }
+	      sad.sin_port = htons(portnum);
+	      memcpy((void*)&sad.sin_addr, addr, hp->h_length);
+	      if (connect(fd, (void*)&sad, sizeof sad) < 0) {
+		eval = errno;
+		fprintf(stderr, "%s: connect failed to %s", progname,
+			dottedquad(&sad.sin_addr));
+		if ((addr = *hp_nextaddr()) != NULL) {
+		  memcpy((char *)&sad.sin_addr, addr, hp->h_length);
+		  fprintf(stderr, ", trying %s...\n", dottedquad(&sad.sin_addr));
+		} else
+		  putc('\n', stderr);
+		close(fd);
+		if ((fd = socket(PF_INET, SOCK_STREAM, 0)) < 0){
+		  fprintf(stderr, "%s: ", progname);
+		  perror("socket");
+		  exit(EX_UNAVAILABLE);
+		}
+		continue;
+	      }
+	      break;
+	    }
+	    if (*hp_getaddr() == NULL) {
+	      fprintf(stderr, "%s: ", progname);
+	      errno = eval;
+	      perror("connect");
+	      fprintf(stderr, "%s: unable to contact scheduler on %s\n",
+		      progname, hp->h_name);
+	      exit(EX_UNAVAILABLE);
+	    }
+	  }
+	  docat((char *)NULL, fd);
+	}
 #else	/* !AF_INET */
 	if (strcmp(host, "localhost") == 0 ||
 	    strcmp(host, "127.0.0.1") == 0) {
@@ -377,20 +426,24 @@ docat(file, fd)
 {
 	char buf[BUFSIZ];
 	int n;
-	FILE *fp = NULL;
+	FILE *fpi = NULL, *fpo = NULL;
 
-	if (fd < 0 && (fp = fopen(file, "r")) == NULL) {
+	if (fd < 0 && (fpi = fopen(file, "r")) == NULL) {
 	  fprintf(stderr, "%s: %s: %s\n", progname, file, strerror(errno));
 	  exit(EX_OSFILE);
 	  /* NOTREACHED */
-	} else if (fd >= 0)
-	  fp = fdopen(fd, "r");
-	if (debug)
-	  while ((n = fread(buf, sizeof buf[0], sizeof buf, fp)) > 0)
+	} else if (fd >= 0) {
+	  fpi = fdopen(fd, "r");
+	  fpo = fdopen(fd, "w");
+	}
+	if (debug && fpi)
+	  while ((n = fread(buf, sizeof buf[0], sizeof buf, fpi)) > 0)
 	    fwrite(buf, sizeof buf[0], n, stdout);
 	else
-	  report(fp);
-	fclose(fp);
+	  if (fpi && fpo)
+	    report(fpi, fpo);
+	if (fpi) fclose(fpi);
+	if (fpo) fclose(fpo);
 }
 
 /*
@@ -621,14 +674,44 @@ isalive(pidfil, pidp, fpp)
 #define	LEN_MAGIC_PREAMBLE	(sizeof MAGIC_PREAMBLE - 1)
 #define	VERSION_ID		"zmailer 1.0"
 #define	VERSION_ID2		"zmailer 2.0"
-#define	GETLINE(buf,fp)		\
-	if (fgets(buf, bufsize, fp) == NULL) {\
-		fprintf(stderr, "%s: no input from scheduler\n", progname);\
-		buf[0] = '\0';\
-		return 0;\
-	}\
-	{ char *s; if ((s = strchr(buf,'\n'))) *s = '\0'; }
-				
+
+static int _getline(buf, bufsize, bufspace, fp)
+     char **buf;
+     int *bufsize;
+     int *bufspace;
+     FILE *fp;
+{
+  int c;
+  while ((c = fgetc(fp)) != EOF) {
+    if (c == '\n')
+      break;
+
+    if (!*buf) {
+      *bufsize = 0;
+      *bufspace = 110;
+      *buf = malloc(*bufspace+3);
+    }
+    if (*bufsize >= *bufspace) {
+      *bufspace *= 2;
+      *buf = realloc(*buf, *bufspace+3);
+    }
+    (*buf)[*bufsize] = c;
+    *bufsize += 1;
+  }
+  (*buf)[*bufsize] = 0;
+
+  if (c == EOF && *bufsize != 0) {
+    fprintf(stderr, "%s: no input from scheduler\n", progname);
+    buf[0] = '\0';
+    return -1;
+  }
+
+  return 0; /* Got something */
+}
+
+
+#define GETLINE(buf, bufsize, bufspace, fp) _getline(&buf, &bufsize, &bufspace, fp)
+
 
 const char *names[SIZE_L+2];
 
@@ -650,17 +733,17 @@ parse(fp)
 	register int	i;
 	u_long	list, key;
 	struct spblk *spl;
-	int bufsize = 8192*32; /* Sometimes the input has LONG lines.. */
-	char  *buf, *ocp;
+	int bufsize, bufspace;
+	char  *buf = NULL, *ocp;
 
 	names[L_CTLFILE] = "Vertices:";
 	names[L_HOST]    = "Hosts:";
 	names[L_CHANNEL] = "Channels:";
 	names[L_END]     = "End:";
 
-	buf = emalloc(bufsize);
-
-	GETLINE(buf,fp);
+	bufsize = 0;
+	if (GETLINE(buf,bufsize,bufspace,fp))
+	  return 0;
 
 	if (EQNSTR(buf, MAGIC_PREAMBLE) &&
 	    EQNSTR(buf+LEN_MAGIC_PREAMBLE, VERSION_ID2))
@@ -676,21 +759,18 @@ parse(fp)
 	  /* We ignore the classical mailq data, just read it fast */
 	  while (1) {
 	    int c;
-	    buf[bufsize-1] = 0;
-	    if (fgets(buf, bufsize, fp) == NULL)
+	    bufsize = 0;
+	    if (GETLINE(buf, bufsize, bufspace, fp))
 	      return 1; /* EOF ? */
-	    if (buf[bufsize-1] != 0) {
-	      /* A VERY long string */
-	      while ((c = getc(fp)) != '\n' && c != EOF) ;
-	      continue;
-	    }
 	    if (memcmp(buf,"End:",4) == 0)
 	      return 1;
 	  }
 	  /* NOT REACHED */
 	}
 
-	GETLINE(buf,fp);
+	bufsize = 0;
+	if (GETLINE(buf,bufsize,bufspace,fp))
+	  return 0;
 	if (!EQNSTR(buf, names[L_CTLFILE]))
 	  return 0;
 	list = L_CTLFILE;
@@ -700,7 +780,8 @@ parse(fp)
 	spt_ids[L_HOST   ] = sp_init();
 	while (1) {
 
-	  if (fgets(buf, bufsize-1, fp) == NULL)
+	  bufsize = 0;
+	  if (GETLINE(buf, bufsize, bufspace, fp))
 	    break;
 
 	  switch ((int)list) {
@@ -947,29 +1028,81 @@ repscan(spl)
 	return 0;
 }
 
-void query2 __((FILE *));
-void query2(fp)
-	FILE *fp;
+void query2 __((FILE *, FILE*));
+void query2(fpi, fpo)
+	FILE *fpi, *fpo;
 {
-	int  len;
-	char buf[512];
+	int  len, i;
+	int bufsize = 0;
+	int bufspace = 0;
+	char *challenge = NULL;
+	char *buf = NULL;
+	MD5_CTX CTX;
+	unsigned char digbuf[16];
 
-	/* XX: Authenticate the query */
+	/* XX: Authenticate the query - get challenge */
+	bufsize = 0;
+	if (GETLINE(challenge, bufsize, bufspace, fpi))
+	  return;
+
+	MD5Init(&CTX);
+	MD5Update(&CTX, challenge, strlen(challenge));
+	MD5Update(&CTX, v2password, strlen(v2password));
+	MD5Final(digbuf, &CTX);
+	
+	fprintf(fpo, "AUTH %s ", v2username);
+	for (i = 0; i < 16; ++i) fprintf(fpo,"%02x",digbuf[i]);
+	fprintf(fpo, "\n");
+	if (fflush(fpo) || ferror(fpo)) {
+	    perror("login to scheduler command interface failed");
+	    return;
+	}
+
+	bufsize = 0;
+	if (GETLINE(buf, bufsize, bufspace, fpi))
+	    return;
+
+	if (*buf != '+') {
+	  printf("User '%s' not accepted to server '%s'; err='%s'\n",
+		 v2username, host ? host : "<NO-HOST-?>", buf+1);
+	  return;
+	}
 
 	if (schedq) {
-	  if (schedq > 1)
-	    strcpy(buf,"SHOW-QUEUE CONDENCED\n");
+
+	  if (schedq > 2)
+	    strcpy(buf,"SHOW SNMP\n");
+	  else if (schedq > 1)
+	    strcpy(buf,"SHOW QUEUE SHORT\n");
 	  else
-	    strcpy(buf,"SHOW-QUEUE THREADS\n");
+	    strcpy(buf,"SHOW QUEUE THREADS\n");
+
 	  len = strlen(buf);
-	  if (write(fileno(fp),buf,len) != len) {
+
+	  if (fwrite(buf,1,len,fpo) != len || fflush(fpo)) {
 	    perror("write to scheduler command interface failed");
 	    return;
 	  }
-	  while (!feof(fp) && !ferror(fp)) {
-	    int c = getc(fp);
-	    if (c == EOF) break;
-	    putc(c,stdout);
+
+	  bufsize = 0;
+	  if (GETLINE(buf, bufsize, bufspace, fpi))
+	    return;
+
+	  if (*buf != '+') {
+
+	    printf("Scheduler response: '%s'\n",buf);
+
+	  } else {
+
+	    for (;;) {
+	      bufsize = 0;
+	      if (GETLINE(buf, bufsize, bufspace, fpi))
+		break;
+	      if (buf[0] == '.' && buf[1] == 0)
+		break;
+	      printf("%s\n",buf);
+	    }
+
 	  }
 	} else {
 	  printf("Sorry, scheduler with protocol version 2 can't give results without -Q option\n");
@@ -977,22 +1110,22 @@ void query2(fp)
 }
 
 void
-report(fp)
-	FILE *fp;
+report(fpi,fpo)
+	FILE *fpi, *fpo;
 {
-	int rc = parse(fp);
+	int rc = parse(fpi);
 	if (rc == 0)
 	  return;
 	if (rc == 2) {
-	  query2(fp);
+	  query2(fpi,fpo);
 	  return;
 	}
 	if (schedq) {
 	  /* Old-style processing */
 	  int prevc = -1;
 	  int linesuppress = 0;
-	  while (!ferror(fp)) {
-	    int c = getc(fp);
+	  while (!ferror(fpi)) {
+	    int c = getc(fpi);
 	    if (c == EOF)
 	      break;
 	    if (prevc == '\n') {
@@ -1080,10 +1213,10 @@ printaddrs(v)
 	    if (stat(path, &stbuf) == 0) {
 	      /* overload offset[] to be size of message */
 	      v->cfp->offset[0] = stbuf.st_size;
-	      v->cfp->ctime     = stbuf.st_ctime;
+	      v->cfp->mtime     = stbuf.st_mtime;
 	    } else {
 	      v->cfp->offset[0] = 0;
-	      v->cfp->ctime     = 0;
+	      v->cfp->mtime     = 0;
 	    }
 	  }
 	}
@@ -1092,10 +1225,10 @@ printaddrs(v)
 	if (v->cfp->logident)
 	  printf("\t  id\t%s", v->cfp->logident);
 	if (verbose > 1 && v->cfp->offset[0] > 0) {
-	  long dt = now - v->cfp->ctime;
-	  int fields = 2;
-	  printf(", %ld bytes, age ", v->cfp->offset[0]);
-	  /* age (now-ctime) printout */
+	  long dt = now - v->cfp->mtime;
+	  int fields = 3;
+	  printf(", %ld bytes, age ", (long)v->cfp->offset[0]);
+	  /* age (now-mtime) printout */
 	  if (dt > (24*3600)) {	/* Days */
 	    printf("%dd", (int)(dt /(24*3600)));
 	    dt %= (24*3600);

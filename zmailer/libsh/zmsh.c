@@ -28,6 +28,8 @@ struct cmddef commands[] = {
 #include "sh-out.i"
 };
 
+extern int newcell_gc_interval, D_conscell;
+
 int ncommands = sizeof commands / sizeof commands[0];
 
 struct sptree *spt_funclist = NULL;
@@ -38,7 +40,7 @@ int saweof;
 FILE *runiofp = NULL;
 conscell *commandline = NULL;	/* argument to -c option */
 const char *progname;
-struct osCmd avcmd;
+struct osCmd avcmd = { 0, };
 
 char shfl[CHARSETSIZE/NBBY];
 
@@ -105,7 +107,7 @@ zshinit(argc, argv)
 	int c, errflag, io, uid, loadit;
 	register struct shCmd *shcmdp;
 	memtypes oval;
-	
+
 	runiofp = stdout;
 
 	oval = stickymem;
@@ -171,7 +173,7 @@ zshinit(argc, argv)
 	loadit = errflag = 0;
 	optind = 1;	/* not to be influenced by previous getopt()'s */
 	while (1) {
-		c = getopt(argc, (char**)argv, "CILMOPRSYc:l:isaefhkntuvx");
+		c = getopt(argc, (char**)argv, "CGILMOPRSYc:l:isaefhkntuvx");
 		if (c == EOF)
 		  break;
 		switch (c) {
@@ -187,15 +189,18 @@ zshinit(argc, argv)
 			} else
 				setopt(c, 1);
 			break;
+		case 'G':	/* conscell GC debugging */
+			newcell_gc_interval = 1;
+			D_conscell = 1;
 		case 'R':	/* runtime I/O */
 		case 'I':	/* interpreter (runtime interpretation) */
 		case 'Y':	/* just open the runiofp stream */
 			setopt(c, 1);
 			if (runiofp == stdout) {
 				io = open("/dev/tty", O_WRONLY, 0);
-				dup2(io, 19);
+				dup2(io, 60);
 				close(io);
-				runiofp = fdopen(19 /* out of the way */, "w");
+				runiofp = fdopen(60 /* out of the way */, "w");
 			}
 			break;
 		/* these are the normal shell-external flags */
@@ -262,19 +267,30 @@ zshinit(argc, argv)
 		SIGNAL_HANDLE(SIGINT, trap_handler);
 	}
 
+	avcmd.argv = NULL;
+
+	staticprot(& avcmd.argv);  /* LispGC */
+	staticprot(& commandline); /* LispGC */
+	staticprot(& envarlist);   /* LispGC */
+
 	avcmd.argv = s_listify(argc-optind, &argv[optind]);
+
 	if (isset('s')) {
-		conscell *d, *tmp;
-		d = conststring(progname);
+		conscell *d = NULL;
+		GCVARS1;
+		GCPRO1(d);
+		d = conststring(progname,strlen(progname));
 		s_push(d, avcmd.argv);
+		UNGCPRO1;
 	}
 
 	v_envinit();
 	v_set(PS2, DEFAULT_PS2);
-	if (uid == 0)
+	if (uid == 0) {
 		v_set(PS1, DEFAULT_ROOT_PS1);
-	else
+	} else {
 		v_set(PS1, DEFAULT_PS1);
+	}
 	path_flush();
 	mail_flush();
 	mail_intvl();
@@ -296,7 +312,8 @@ zshfree()
 {
 	sp_scan(xundefun, (struct spblk *)NULL, spt_funclist);
 	sp_null(spt_funclist);
-	s_free_tree(envarlist);
+	/* s_free_tree(envarlist); */
+	envarlist = NULL;
 }
 
 /* return no. of characters left to read from *cpp */

@@ -3,7 +3,7 @@
  *	This will be free software, but only when it is finished.
  */
 
-#include "malloc.h"
+#include "zmalloc.h"
 #define	STATIC static
 
 /* configurable language-independent stuff */
@@ -84,4 +84,4 @@ fi\n"
 #define	CANNOT_OPEN		"cannot open"
 #define	PIPE			"pipe"
 /* sh.c */
-#define	USAGE	"Usage: %s [ -isaefhkntuvx ] [ -c command ] [ argument ... ]\n"
+#define	USAGE	"Usage: %s [ -isaefhkntuvx[CGILMOPRSY] ] [ -c command ] [ argument ... ]\n"

@@ -14,6 +14,7 @@ CPPDEP=		@CPPDEP@
 TOPDIR=		..
 MAILBIN=	$(prefix)@MAILBIN@
 DEFS=		@DEFS@
+MD5SUM=		@MD5SUM@
 INSTALL=	@INSTALL@
 #
 INCL=		-I$(srcdir)/$(TOPDIR)/include -I$(TOPDIR)/include -I$(TOPDIR) -I$(srcdir)/$(TOPDIR)/libsh -I$(TOPDIR)/libsh -I.
@@ -21,13 +22,13 @@ CFLAGS=		$(COPTS) $(CPPFLAGS) $(DEFS) $(ROUTER_INCL) $(INCL)
 LIBMALLOC=	@LIBMALLOC@
 LIBMALLOCDEB=	$(TOPDIR)/libmalloc/libmalloc_d.a-a
 #
-LIB=		-L$(TOPDIR)/libs -lzmdb -lsh -lz -lzc $(LIBMALLOC)
+LIB=		-L$(TOPDIR)/libs -lzmdb -lsh -lzm -lzc @LIBRESOLV@ @LIBSOCKET@ $(LIBMALLOC)
 LIBDEB=		$(TOPDIR)/libs/libtag
 
 BINS=	autoanswer.pl policy-builder.sh rotate-logs.sh		\
-	$(srcdir)/make-incore.sh $(srcdir)/bitbucket
+	$(srcdir)/make-incore.sh $(srcdir)/bitbucket md5sum
 
-all:	listexpand
+all:	listexpand md5sum
 	cd makedb ; $(MAKE) $(MFLAGS)
 	cd vacation ; $(MAKE) $(MFLAGS)
 
@@ -37,6 +38,7 @@ install:
 			$(INSTALL) -m 755 $$BIN  $(MAILBIN) ;	\
 		else						\
 			echo "*** No overwrite of $$BIN, already exists!" ; \
+			$(INSTALL) -m 755 $$BIN  $(MAILBIN)/$$BIN.new ;	\
 		fi ;						\
 	done
 	@$(INSTALL) -m 755 $(srcdir)/bitbucket $(MAILBIN)/ta
@@ -49,6 +51,10 @@ install:
 
 listexpand:	listexpand.o
 	$(CC) $(CFLAGS) -o $@.x listexpand.o $(LIB)
+	mv $@.x $@
+
+md5sum: md5sum.o $(LIBDEB)
+	$(CC) $(CFLAGS) -o $@.x md5sum.o $(LIB)
 	mv $@.x $@
 
 FRC:

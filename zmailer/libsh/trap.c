@@ -13,7 +13,7 @@
 #include <sys/stat.h>
 #include "zmsignal.h"
 #include "flags.h"
-#include "malloc.h"
+#include "zmalloc.h"
 /* #include "listutils.h" */
 #include "sh.h"
 #include "io.h"			/* redefines stdio routines */
@@ -184,14 +184,14 @@ extern void *optimize __((int, void *, void **));
 			    (fp = fopen(fcfile, "w")) != NULL) {
 				/* magic1, magic2, st_dev, st_ino,
 				   st_size, st_mtime, st_ctime */
-				fprintf(fp,"#!zmsh -l%s,%d,%ld,%ld,%ld,%ld,%d,%d\n",
+				fprintf(fp,"#!zmsh -l%s,%d,%ld,%ld,%ld,%ld,%ld,%ld\n",
 					VersionNumb,
 					magic_number, (long)bin_magic,
 					(long)srcstbufp->st_dev,
 					(long)srcstbufp->st_ino,
 					(long)srcstbufp->st_size,
-					(int)srcstbufp->st_mtime,
-					(int)srcstbufp->st_ctime);
+					(long)srcstbufp->st_mtime,
+					(long)srcstbufp->st_ctime);
 
 				std_fwrite(table, 1,
 					   (char*)eotable - (char*)table, fp);
@@ -366,7 +366,8 @@ trapexit(n)
 	}
 
 	/* Lets clean these up, malloc tracers complain less.. */
-	s_free_tree(envarlist);
+	/* s_free_tree(envarlist); */
+	envarlist = NULL;
 
 #ifdef	MALLOC_TRACE
 	mal_dumpleaktrace(stderr);
@@ -403,7 +404,7 @@ sh_trap(argc, argv)
 		/* ignore the specified signals */
 		script = *argv;
 		--argc, ++argv;
-	} else if (isascii(**argv) && isdigit(**argv)) {
+	} else if (isascii((unsigned)(**argv)) && isdigit((unsigned)(**argv))){
 		/* reset the signal handlers to original value */
 		script = NULL;
 	} else {

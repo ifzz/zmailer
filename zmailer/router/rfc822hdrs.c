@@ -407,18 +407,20 @@ mkDate(isresent, unixtime)
  * Print an entire header entry onto fp, possibly multiple lines.
  */
 
-int	hdr_width = 160;
+int	hdr_width = 78;
 
 void
 hdr_print(h, fp)
 	struct header *h;
 	FILE *fp;
 {
-	int col, addrlen, newline;
+	int col, cl, addrlen, newline;
 	token822 *t;
 	struct address *ap;
 	struct addr *pp;
 	HeaderSemantics sem;
+	int foldcol, hadspc;
+	int canprefold = 0;
 
 	if (h == NULL)
 		return;
@@ -430,84 +432,164 @@ hdr_print(h, fp)
 
 	col = 1 + strlen(h->h_pname);
 
-	switch (sem) {
-	case Address:
-	case Addresses:
-	case AddressList:
-	case DomainName:
-	case Mailbox:
-	case Mailboxes:
-	case MailboxList:
-	case AMailboxList:
-	case MessageID:
-	case RouteAddressInAngles:
-	case RouteAddress:
-	case UserAtDomain:
-	case DateTime:
-		if (wanttabs) {
-			fprintf(fp, "%s:%c", h->h_pname, col >= 7 ? ' ' : '\t');
-			col += col >= 7 ? 1 : 8 - col%8;
-		} else {
-			fprintf(fp, "%s: ", h->h_pname);  /* spoilsport! */
-			++col;
+	fprintf(fp, "%s:", h->h_pname);
+
+	/* If it was pre-existing header, output all its pre-existing
+	   white-spaces now */
+
+	foldcol = 0; /* reusing for other purpose */
+	for (t = h->h_lines; t != NULL; t = t->t_next) {
+		const char *p = t->t_pname;
+		while (*p == ' ' || *p == '\t' ||
+		       *p == '\n' || *p == '\r') {
+		  putc(*p, fp);
+		  if (*p == ' ')
+		    ++col;
+		  else if (*p == '\t')
+		    col += 8 - (col % 8);
+		  else
+		    col = 0;
+		  ++p;
+		  ++foldcol;
 		}
-		break;
-	default:
-		fprintf(fp, "%s:", h->h_pname);
-		break;
+		if (*p != 0)
+		  break;
+		if (!t->t_next) /* Don't fold here ! */
+		  break;
+		col = 0;
+		putc('\n', fp);
+		foldcol = 0;
 	}
+	if (h->h_lines == 0) {
+		putc(' ', fp);
+		++col;
+		++foldcol;
+	}
+
+	/* Fill to column 8 in all cases.. */
+	for ( ; col < 8; ++col) {
+	  putc(' ', fp);
+	  ++foldcol;
+	}
+
+	if (!foldcol) {
+	  /* Always at least one space! */
+	  putc(' ', fp);
+	  ++col;
+	}
+
+	foldcol = col;
+
 	switch (sem) {
 	case Received:
 		if (h->h_lines != NULL) {
-			/* Write out the original lines if possible */
-			for (t = h->h_lines; t != NULL; t = t->t_next) {
-				fwrite(t->t_pname, sizeof (char),
-				       (int)(TOKENLEN(t)), fp);
-				putc('\n', fp);
-			}
-			break;
+		  /* Write out the original lines, if possible */
+		  int first = 1;
+		  for (t = h->h_lines; t != NULL; t = t->t_next) {
+		    const char *p = t->t_pname;
+		    int len = (int)(TOKENLEN(t));
+		    if (first) {
+		      while ((len > 0) &&
+			     (*p == ' '||*p == '\t'||*p == '\n'||*p == '\r'))
+			++p, --len;
+		      if (!len) continue;
+		      first = 0;
+		    }
+		    fwrite(p, sizeof (char), len, fp);
+		    putc('\n', fp);
+		  }
+		  break;
 		}
+		hadspc = 1;
 		if ((ap = h->h_contents.r->r_from) != NULL) {
-			fprintf(fp, " from ");
-			printAddress(fp, ap->a_tokens, 0);
+		    if (ap->a_tokens == NULL) {
+			if (ap->a_pname[0] != '(') {
+			  fprintf(fp, "from");
+			  col += 5;
+			}
+			fprintf(fp, " %s", ap->a_pname);
+			col += strlen(ap->a_pname)+1;
+		    } else {
+			pp = ap->a_tokens;
+			t = pp ? pp->p_tokens : NULL;
+			if (t && t->t_type == Atom  && t->t_len == 5 &&
+			    t->t_pname && memcmp(t->t_pname, "STDIN", 5)==0)
+			  pp = pp->p_next;
+			/* PURE comment */
+			else {
+			  fprintf(fp, "from ");
+			  col += 5;
+			}
+			if (pp)
+			  col = printLAddress(fp, pp, col, 8, 0);
+			else
+			  fprintf(fp, "(nil??)"), col += 7;
+		    }
+		    hadspc = 0;
 		}
 		if ((ap = h->h_contents.r->r_by) != NULL) {
-			fprintf(fp, " by ");
-			printAddress(fp, ap->a_tokens, 0);
+			cl = printAddress(NULL, ap->a_tokens, col+4);
+			if (cl > hdr_width) {
+			  fprintf(fp, "\n\t");
+			  col = 8;
+			} else if (!hadspc)
+			  putc(' ',fp), ++col;
+			fprintf(fp, "by ");
+			col = printLAddress(fp, ap->a_tokens, col+3, 8, 0);
 		}
 		if ((t = h->h_contents.r->r_via) != NULL) {
-			fprintf(fp, " via ");
-			fprintToken(fp, t, 0);
+			cl = fprintToken(NULL, t, col+5);
+			if (cl > hdr_width) {
+			  fprintf(fp, "\n\t");
+			  col = 8;
+			} else
+			  putc(' ',fp), ++col;
+			fprintf(fp, "via ");
+			col = fprintToken(fp, t, col+4);
 		}
 		for (t = h->h_contents.r->r_with; t != NULL; t = t->t_next) {
-			fprintf(fp, " with ");
-			fprintToken(fp, t, 0);
+			cl = fprintToken(NULL, t, col+6);
+			if (cl > hdr_width) {
+			  fprintf(fp, "\n\t");
+			  col = 8;
+			} else
+			  putc(' ',fp), ++col;
+			fprintf(fp, "with ");
+			col = fprintToken(fp, t, col+5);
 		}
 		if ((ap = h->h_contents.r->r_id) != NULL) {
-			fprintf(fp, " id <");
-			printAddress(fp, ap->a_tokens, 0);
-			putc('>', fp);
+			cl = printAddress(NULL, ap->a_tokens, col+6);
+			if (cl > hdr_width) {
+			  fprintf(fp, "\n\t");
+			  col = 8;
+			} else
+			  putc(' ',fp), ++col;
+			fprintf(fp, "id <");
+			col = printLAddress(fp, ap->a_tokens, col+5, 8, 0);
+			putc('>', fp); ++col;
 		}
 		if ((ap = h->h_contents.r->r_for) != NULL) {
-			fprintf(fp, " for ");
-			printAddress(fp, ap->a_tokens, 0);
+			cl = printAddress(NULL, ap->a_tokens, col+5);
+			if (cl > hdr_width) {
+			  fprintf(fp, "\n\t");
+			  col = 8;
+			} else
+			  putc(' ',fp), ++col;
+			fprintf(fp, "for ");
+			col = printLAddress(fp, ap->a_tokens, col+4, 8, 0);
 		}
 		putc(';', fp);
-		putc(' ', fp);
+		++col;
 		{
 		  char *cp, *s;
+		  int len;
 		  cp = rfc822date(&(h->h_contents.r->r_time));
-		  s = cp + strlen(cp) -1;
+		  s = cp + (len = strlen(cp)) -1;
 		  if (*cp != 0 && *s == '\n') *s = 0;
-		  fputs(cp, fp);
-		  putc('\n', fp);
-		}
-		break;
-	case nilHeaderSemantics:
-		for (t = h->h_lines; t != NULL; t = t->t_next) {
-			fwrite(t->t_pname, sizeof (char),
-			       (int)TOKENLEN(t), fp);
-			putc('\n', fp);
+		  if ((col+len+1) > hdr_width)
+		    fprintf(fp, "\n\t%s\n", cp);
+		  else
+		    fprintf(fp, " %s\n", cp);
 		}
 		break;
 	case Address:
@@ -524,38 +606,54 @@ hdr_print(h, fp)
 	case UserAtDomain:
 		newline = 1;
 		for (ap = h->h_contents.a; ap != NULL; ap = ap->a_next) {
-			addrlen = printAddress(fp, ap->a_tokens, col);
-			for (pp = ap->a_tokens; pp != NULL; pp = pp->p_next)
-				if (pp->p_type == anAddress)
-					break;
-			/* pp == NULL means mail group phrase */
-			if (ap->a_next != NULL)
-				++addrlen;
-			if (newline || addrlen < hdr_width) {
-				if (newline)
-					newline = 0;
-				else
-					++col, putc(' ', fp);
-				if (addrlen - col + 8 > hdr_width) {
-					col = printLAddress(fp,
-							    ap->a_tokens, col);
-				} else {
-				/* we don't bother calculating col exactly */
-					col = addrlen;
-					printAddress(fp,
-							    ap->a_tokens, 0);
-				}
-			} else if (addrlen - col +8 > hdr_width/* columns */) {
-				++col, putc(' ', fp);
-				col = printLAddress(fp, ap->a_tokens, col);
-			} else {
-				putc('\n', fp);
-				putc('\t', fp);
-				col = 8 + addrlen - col;
-				printAddress(fp, ap->a_tokens, 0);
-			}
-			if (pp != NULL && ap->a_next != NULL)
-				++col, putc(',', fp);
+
+		  addrlen = printAddress(NULL, ap->a_tokens, col);
+
+		  for (pp = ap->a_tokens; pp != NULL; pp = pp->p_next)
+		    if (pp->p_type == anAddress)
+		      break;
+
+		  /* pp == NULL means mail group phrase */
+		  if (ap->a_next != NULL)
+		    ++addrlen;
+
+		  if (newline || ((addrlen+3 > hdr_width) && !canprefold)) {
+		    if (!newline)
+		      ++col, putc(' ',fp);
+
+		    if (addrlen + 3 >= hdr_width) {
+		      /* Too close to the edge, (or over it) do folding */
+		      col = printLAddress(fp, ap->a_tokens, col, foldcol,
+					  canprefold);
+		    } else {
+		      /* Within right margin, no fold needed */
+		      col = printAddress(fp, ap->a_tokens, col);
+		    }
+		    newline = 0;
+
+		  } else if (addrlen +3 < hdr_width /* columns */) {
+
+		    /* Within margins, plain simple insert, no folding */
+		    putc(' ', fp);
+		    col = printAddress(fp, ap->a_tokens, col+1);
+
+		  } else {
+
+		    /* Explicite prefold */
+		    putc('\n', fp);
+		    for (col = 0; col + 8  < foldcol; col += 8)
+		      putc('\t', fp);
+		    for (;col < foldcol; ++col)
+		      putc(' ', fp);
+		    if (col < 1)
+		      putc(' ', fp), ++col;
+		    col = printLAddress(fp, ap->a_tokens, col, foldcol, 0);
+
+		  }
+		  canprefold = 1;
+
+		  if (pp != NULL && ap->a_next != NULL)
+		    ++col, putc(',', fp);
 		}
 		putc('\n', fp);
 		break;
@@ -567,22 +665,29 @@ hdr_print(h, fp)
 			s = cp + strlen(cp) -1;
 			if (*cp != 0 && *s == '\n') *s = 0;
 			fputs(cp, fp);
-			putc('\n', fp);
 			break;
 		} /* else we have the original line ... */
-		for (t = h->h_lines; t != NULL; t = t->t_next) {
-			const char *cp = t->t_pname;
-			/* Skip over the leading white-space */
-			while (*cp == ' '||*cp == '\t') ++cp;
-			fputs(cp, fp);
-			putc('\n', fp);
-		}
-		break;
+		/* Fall thru ... */
+	case nilHeaderSemantics:
 	default:
-		for (t = h->h_lines; t != NULL; t = t->t_next) {
-			fwrite(t->t_pname, sizeof (char),
-			       (int)(TOKENLEN(t)), fp);
-			putc('\n', fp);
+		/* Write out the original lines, if possible */
+		{
+		  int first = 1;
+		  for (t = h->h_lines; t != NULL; t = t->t_next) {
+		    const char *p = t->t_pname;
+		    int len = (int)(TOKENLEN(t));
+		    if (first) {
+		      while ((len > 0) &&
+			     (*p == ' '||*p == '\t'||*p == '\n'||*p == '\r'))
+			++p, --len;
+		      if (!len) continue;
+		      first = 0;
+		    }
+		    fwrite(p, sizeof (char), len, fp);
+		    putc('\n', fp);
+		  }
+		  if (first) /* totally empty header! */
+		    putc('\n', fp);
 		}
 		break;
 	}
@@ -665,91 +770,13 @@ pureAddressBuf(buf, len, pp)
  * have been printed is returned instead.
  */
 
-int
-printAddress(fp, pp, onlylength)
-	FILE *fp;
-	register struct addr *pp;
-	int onlylength;
-{
-	int inAddress;
-	token822 *t;
-	struct addr *lastp, *tpp;
+/* If 'fp' is non-null, retuns column where the output is,
+ * for null 'fp', returns the number of output characters.
+ */
 
-	inAddress = 0;
-	for (lastp = NULL, tpp = pp; tpp != NULL; tpp = tpp->p_next)
-		if (tpp->p_type == anAddress)
-			lastp = tpp;
-	for (; pp != NULL; pp = pp->p_next) {
-		if (pp->p_type == aComment || pp->p_type == anError) {
-			if (onlylength) ++onlylength;
-			else putc('(', fp);
-		} else if (pp->p_type == anAddress)
-			inAddress = 1;
-		for (t = pp->p_tokens; t != NULL; t = t->t_next) {
-			switch (pp->p_type) {
-			case aPhrase:
-			case aComment:
-			case aGroup:
-			case aWord:
-				if (t != pp->p_tokens) {
-					if (onlylength) ++onlylength;
-					else putc(' ', fp);
-				}
-				/* fall through */
-			case anAddress:
-			case aDomain:
-			case anError:
-			case reSync:
-				onlylength = fprintToken(fp, t, onlylength);
-				if (pp->p_type == reSync && t->t_next != NULL
-				    && (t->t_next->t_type == t->t_type
-					|| *(t->t_next->t_pname) == '<')) {
-				  if (onlylength)
-				    ++onlylength;
-				  else
-				    putc(' ', fp);
-				}
-				break;
-			case aSpecial:
-				if (t != pp->p_tokens && *(t->t_pname) == '<'){
-				  if (onlylength)
-				    ++onlylength;
-				  else
-				    putc(' ', fp);
-				}
-				if (onlylength)
-				  ++onlylength;
-				else
-				  putc((*t->t_pname), fp);
-				break;
-			}
-		}
-		if (pp->p_type == aComment || pp->p_type == anError) {
-			if (onlylength)
-			  ++onlylength;
-			else
-			  putc(')', fp);
-		} else if (lastp == pp)
-			inAddress = 0;
-		if (!inAddress && pp->p_next != NULL
-		    && !(pp->p_next->p_type == anAddress
-			 && pp->p_type == aSpecial
-			 && *pp->p_tokens->t_pname == '<')
-		    && !(pp->p_next->p_type == aSpecial
-			 && pp->p_type == anAddress
-			 && *pp->p_next->p_tokens->t_pname == '>')
-		    && !(pp->p_next->p_type == aSpecial
-			 && *pp->p_next->p_tokens->t_pname == ':')
-		    && pp->p_next->p_type != anError) {
-			if (onlylength) ++onlylength;
-			else putc(' ', fp);
-		}
-	}
-	return onlylength;
-}
 
 int
-printLAddress(fp, pp, col)
+printAddress(fp, pp, col)
 	FILE *fp;
 	register struct addr *pp;
 	int col;
@@ -764,7 +791,8 @@ printLAddress(fp, pp, col)
 			lastp = tpp;
 	for (; pp != NULL; pp = pp->p_next) {
 		if (pp->p_type == aComment || pp->p_type == anError) {
-			++col, putc('(', fp);
+			if (fp) putc('(', fp);
+			++col;
 		} else if (pp->p_type == anAddress)
 			inAddress = 1;
 		for (t = pp->p_tokens; t != NULL; t = t->t_next) {
@@ -774,42 +802,37 @@ printLAddress(fp, pp, col)
 			case aGroup:
 			case aWord:
 				if (t != pp->p_tokens) {
-					++col, putc(' ', fp);
+				  if (fp) putc(' ', fp);
+				  ++col;
 				}
 				/* fall through */
 			case anAddress:
 			case aDomain:
 			case anError:
 			case reSync:
-				if (pp->p_type == aComment) {
-					col = fprintFold(fp, t, col);
-				} else {
-					col = fprintToken(fp, t, col);
-					fprintToken(fp, t, 0);
-				}
+				col = fprintToken(fp, t, col);
+				/* Per fp != NULL state this 'col' is now
+				   either total length, or current column */
 				if (pp->p_type == reSync && t->t_next != NULL
 				    && (t->t_next->t_type == t->t_type
 					|| *(t->t_next->t_pname) == '<')) {
-					++col, putc(' ', fp);
+				  if (fp) putc(' ', fp);
+				  ++col;
 				}
 				break;
 			case aSpecial:
-				if (t != pp->p_tokens && *(t->t_pname) == '<')
-					++col, putc(' ', fp);
-				++col, putc((*t->t_pname), fp);
+				if (t != pp->p_tokens && *(t->t_pname) == '<'){
+				  if (fp) putc(' ', fp);
+				  ++col;
+				}
+				if (fp) putc((*t->t_pname), fp);
+				++col;
 				break;
-			}
-			if (t->t_next != NULL
-			    && TOKENLEN(t->t_next) > 1
-			    && ((col + fprintToken(fp, t->t_next, 1)-1)
-				>= hdr_width)) {
-				     putc('\n', fp);
-				     putc('\t', fp);
-				     col = 8;
 			}
 		}
 		if (pp->p_type == aComment || pp->p_type == anError) {
-			++col, putc(')', fp);
+			if (fp) putc(')', fp);
+			++col;
 		} else if (lastp == pp)
 			inAddress = 0;
 		if (!inAddress && pp->p_next != NULL
@@ -822,7 +845,169 @@ printLAddress(fp, pp, col)
 		    && !(pp->p_next->p_type == aSpecial
 			 && *pp->p_next->p_tokens->t_pname == ':')
 		    && pp->p_next->p_type != anError) {
-			++col, putc(' ', fp);
+			if (fp) putc(' ', fp);
+			++col;
+		}
+	}
+	return col;
+}
+
+static int ThisAddressLen(pp)
+     register struct addr *pp;
+{
+  int len = 0;
+  token822 *t;
+  int hadSpecial = (pp->p_type == aSpecial);
+
+  if (hadSpecial)
+    /* Ok, this one is aSpecial '<', next one is anAddress.
+       Scan as long as there are Addresses. */
+    ++len;
+
+  for (pp = pp->p_next; pp && pp->p_type == anAddress; pp = pp->p_next)
+    for (t = pp->p_tokens; t != NULL; t = t->t_next)
+      len = fprintToken(NULL, t, len);
+
+  if (hadSpecial) /* Just imply it.. */
+    len += 2;
+
+  return len;
+}
+
+/* Return the column where the cursor is */
+int
+printLAddress(fp, pp, col, foldcol, canprefold)
+	FILE *fp;
+	register struct addr *pp;
+	int col, foldcol, canprefold;
+{
+	int inAddress;
+	token822 *t;
+	struct addr *lastp, *tpp;
+
+	inAddress = 0;
+	for (lastp = NULL, tpp = pp; tpp != NULL; tpp = tpp->p_next)
+		if (tpp->p_type == anAddress)
+			lastp = tpp;
+	for (; pp != NULL; pp = pp->p_next) {
+		if (pp->p_type == aComment || pp->p_type == anError) {
+			++col;
+			putc('(', fp);
+		} else if (pp->p_type == anAddress)
+			inAddress = 1;
+		
+		if (canprefold)
+		  if ((!inAddress &&
+		       ((pp->p_type == aSpecial) && (t = pp->p_tokens) &&
+			(*t->t_pname == '<') && (pp->p_next) &&
+			((pp->p_next->p_type == anAddress) ||
+			 (pp->p_next->p_type == aDomain))))
+		      || (inAddress == 1)) {
+
+		    /* If *first* of them, see how long is the address
+		       sequence ? Do have have a need to fold NOW ? */
+
+		    int alen = ThisAddressLen(pp);
+
+		    if (alen + col > hdr_width) {
+		      /* Ok, fold now */
+		      putc('\n', fp);
+		      for (col = 0; col+8  < foldcol; col += 8)
+			putc('\t', fp);
+		      for (;col < foldcol; ++col)
+			putc(' ', fp);
+		      if (col < 1)
+			putc(' ', fp), ++col;
+		    }
+		  }
+		canprefold = 1;
+
+		for (t = pp->p_tokens; t != NULL; t = t->t_next) {
+			int special = 0;
+			int add_space = 0;
+			int canfold = 0;
+
+			switch (pp->p_type) {
+			case aPhrase:
+			case aComment:
+			case aGroup:
+			case aWord:
+				if (t != pp->p_tokens) {
+					++col;
+					putc(' ', fp);
+				}
+				canfold = 1;
+				/* fall through */
+			case anAddress:
+			case aDomain:
+			case anError:
+			case reSync:
+#if 1
+				if (canfold)
+				  col = fprintFold(fp, t, col, foldcol);
+				else
+				  col = fprintToken(fp, t, col);
+#else
+  fputs("(<)",fp);
+				if (pp->p_type == aComment) {
+				  col = fprintFold(fp, t, col, foldcol);
+				} else {
+				  col = fprintToken(fp, t, col);
+				}
+  fputs("(>)",fp);
+#endif
+				if (pp->p_type == reSync && t->t_next != NULL
+				    && (t->t_next->t_type == t->t_type
+					|| *(t->t_next->t_pname) == '<'))
+				  add_space = 1;
+				break;
+			case aSpecial:
+				if (t != pp->p_tokens && *(t->t_pname)=='<') {
+				  add_space = 1;
+				  special = *t->t_pname;
+				} else {
+				  putc(*t->t_pname, fp);
+				  ++col;
+				}
+				break;
+			}
+
+			if (inAddress) ++inAddress;
+
+			if (canfold &&
+			    ((special && (col + 10) >= hdr_width) ||
+			     (t->t_next != NULL && (TOKENLEN(t->t_next) > 1)
+			      && (fprintToken(NULL, t->t_next, col+2)
+				  >= hdr_width)))) {
+			  putc('\n', fp);
+			  for (col = 0; col+8  < foldcol; col += 8)
+			    putc('\t', fp);
+			  for (;col < foldcol; ++col)
+			    putc(' ', fp);
+			  if (col < 1)
+			    putc(' ', fp), ++col;
+			} else if (add_space)
+			  putc(' ', fp), ++col;
+			if (special)
+			  putc(special, fp), ++col;
+		}
+		if (pp->p_type == aComment || pp->p_type == anError) {
+			++col;
+			putc(')', fp);
+		} else if (lastp == pp)
+			inAddress = 0;
+		if (!inAddress && pp->p_next != NULL
+		    && !(pp->p_next->p_type == anAddress
+			 && pp->p_type == aSpecial
+			 && *pp->p_tokens->t_pname == '<')
+		    && !(pp->p_next->p_type == aSpecial
+			 && pp->p_type == anAddress
+			 && *pp->p_next->p_tokens->t_pname == '>')
+		    && !(pp->p_next->p_type == aSpecial
+			 && *pp->p_next->p_tokens->t_pname == ':')
+		    && pp->p_next->p_type != anError) {
+			++col;
+			putc(' ', fp);
 		}
 	}
 	return col;
@@ -973,7 +1158,6 @@ errprint(fp, pp, hdrlen)
 			case aDomain:
 			case reSync:
 				len = fprintToken(fp, t, len);
-				fprintToken(fp, t, 0);
 				if (pp->p_type == reSync && t->t_next != NULL
 				    && (t->t_next->t_type == t->t_type
 					|| *(t->t_next->t_pname) == '<'))
@@ -1006,7 +1190,7 @@ errprint(fp, pp, hdrlen)
 		}
 	}
 	putc('\n', fp);
-	for (i = 0; i < (hdrlen+1)/8 ; ++i)
+	for (i = 0; i < hdrlen; i += 8)
 		putc('\t', fp);
 	putc('\t', fp);
 	for (i = 0, len = 0; i < n;) {

@@ -23,26 +23,14 @@ These notices must be retained in any copies of any part of this
 documentation and/or software.
  */
 
-/*
-** The following macro re-definitions added to work around a problem on
-** Solaris where the original MD5 routines are already in /lib/libnsl.a.
-** This causes dynamic linking of the module to fail.
-**
-** Thanks to Ken Pizzini (ken@spry.com) for finally nailing this one!
-*/
-
-#if defined(__sun) && defined(__SVR4)
-#define MD5Init		MD5Init_perl
-#define MD5Update	MD5Update_perl
-#define MD5Final	MD5Final_perl
-#endif
-
 #ifndef __STDC__
 # define const
 #endif
 
 #include "md5-global.h"
 #include "md5.h"
+
+#include <string.h>
 
 /* Constants for MD5Transform routine.
  */
@@ -65,12 +53,8 @@ documentation and/or software.
 #define S44 21
 
 static void MD5Transform PROTO_LIST ((UINT4 [4], unsigned char [64]));
-static void Encode PROTO_LIST
-  ((unsigned char *, UINT4 *, unsigned long));
-static void Decode PROTO_LIST
-  ((UINT4 *, unsigned char *, unsigned long));
-static void MD5_memcpy PROTO_LIST ((POINTER, POINTER, unsigned long));
-static void MD5_memset PROTO_LIST ((POINTER, int, unsigned long));
+static void Encode PROTO_LIST ((unsigned char *, UINT4 *, unsigned long));
+static void Decode PROTO_LIST ((UINT4 *, unsigned char *, unsigned long));
 
 static unsigned char PADDING[64] = {
   0x80, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
@@ -95,36 +79,32 @@ Rotation is separate from addition to prevent recomputation.
 #define FF(a, b, c, d, x, s, ac) { \
  (a) += F ((b), (c), (d)) + (x) + (UINT4)(ac); \
  (a) = ROTATE_LEFT ((a), (s)); \
- (a) += (b); \
- TO32((a)); \
+ a = TO32((a+b)); \
   }
 #define GG(a, b, c, d, x, s, ac) { \
  (a) += G ((b), (c), (d)) + (x) + (UINT4)(ac); \
  (a) = ROTATE_LEFT ((a), (s)); \
- (a) += (b); \
- TO32((a)); \
+ a = TO32((a+b)); \
   }
 #define HH(a, b, c, d, x, s, ac) { \
  (a) += H ((b), (c), (d)) + (x) + (UINT4)(ac); \
  (a) = ROTATE_LEFT ((a), (s)); \
- (a) += (b); \
- TO32((a)); \
+ a = TO32((a+b)); \
   }
 #define II(a, b, c, d, x, s, ac) { \
  (a) += I ((b), (c), (d)) + (x) + (UINT4)(ac); \
  (a) = ROTATE_LEFT ((a), (s)); \
- (a) += (b); \
- TO32((a)); \
+ a = TO32((a+b)); \
   }
 
 /* MD5 initialization. Begins an MD5 operation, writing a new context.
  */
 void MD5Init (context)
-MD5_CTX *context;                                        /* context */
+     MD5_CTX *context;                                        /* context */
 {
   context->count[0] = context->count[1] = 0;
   /* Load magic initialization constants.
-*/
+   */
   context->state[0] = 0x67452301;
   context->state[1] = 0xefcdab89;
   context->state[2] = 0x98badcfe;
@@ -132,16 +112,16 @@ MD5_CTX *context;                                        /* context */
 }
 
 /* MD5 block update operation. Continues an MD5 message-digest
-  operation, processing another message block, and updating the
-  context.
- */
+   operation, processing another message block, and updating the
+   context.
+*/
 void MD5Update (context, input, inputLen)
-MD5_CTX *context;                                        /* context */
-const unsigned char *input;                          /* input block */
-const unsigned int inputLen;               /* length of input block */
+     MD5_CTX *context;                                        /* context */
+     const unsigned char *input;                          /* input block */
+     const unsigned int inputLen;               /* length of input block */
 {
   unsigned long i, index, partLen;
-
+  
   /* Compute number of bytes mod 64 */
   index = (unsigned long)((context->count[0] >> 3) & 0x3F);
 
@@ -156,8 +136,7 @@ const unsigned int inputLen;               /* length of input block */
   /* Transform as many times as possible. */
 
   if (inputLen >= partLen) {
-    MD5_memcpy
-      ((POINTER)&context->buffer[index], (POINTER)input, partLen);
+    memcpy((POINTER)&context->buffer[index], (POINTER)input, partLen);
     MD5Transform (context->state, context->buffer);
 
     for (i = partLen; i + 63 < inputLen; i += 64)
@@ -169,17 +148,17 @@ const unsigned int inputLen;               /* length of input block */
     i = 0;
 
   /* Buffer remaining input */
-  MD5_memcpy((POINTER)&context->buffer[index],
-	     (POINTER)&input[i],
-	     inputLen-i);
+  memcpy((POINTER)&context->buffer[index],
+	 (POINTER)&input[i],
+	 inputLen-i);
 }
 
 /* MD5 finalization. Ends an MD5 message-digest operation, writing the
-  the message digest and zeroizing the context.
- */
+   the message digest and clearing the context.
+*/
 void MD5Final (digest, context)
-unsigned char digest[16];                         /* message digest */
-MD5_CTX *context;                                       /* context */
+     unsigned char digest[16];                         /* message digest */
+     MD5_CTX *context;                                       /* context */
 {
   unsigned char bits[8];
   unsigned long index, padLen;
@@ -199,15 +178,15 @@ MD5_CTX *context;                                       /* context */
   /* Store state in digest */
   Encode (digest, context->state, 16);
 
-  /* Zeroize sensitive information. */
-  MD5_memset ((POINTER)context, 0, sizeof (*context));
+  /* Clear sensitive information. */
+  memset ((POINTER)context, 0, sizeof (*context));
 }
 
 /* MD5 basic transformation. Transforms state based on block.
  */
 static void MD5Transform (state, block)
-UINT4 state[4];
-unsigned char block[64];
+     UINT4 state[4];
+     unsigned char block[64];
 {
   UINT4 a = state[0], b = state[1], c = state[2], d = state[3], x[16];
 
@@ -231,7 +210,7 @@ unsigned char block[64];
   FF (c, d, a, b, x[14], S13, 0xa679438e); /* 15 */
   FF (b, c, d, a, x[15], S14, 0x49b40821); /* 16 */
 
- /* Round 2 */
+  /* Round 2 */
   GG (a, b, c, d, x[ 1], S21, 0xf61e2562); /* 17 */
   GG (d, a, b, c, x[ 6], S22, 0xc040b340); /* 18 */
   GG (c, d, a, b, x[11], S23, 0x265e5a51); /* 19 */
@@ -285,72 +264,49 @@ unsigned char block[64];
   II (c, d, a, b, x[ 2], S43, 0x2ad7d2bb); /* 63 */
   II (b, c, d, a, x[ 9], S44, 0xeb86d391); /* 64 */
 
-  state[0] += a; TO32(state[0]);
-  state[1] += b; TO32(state[1]);
-  state[2] += c; TO32(state[2]);
-  state[3] += d; TO32(state[3]);
+  state[0] = TO32(state[0] + a);
+  state[1] = TO32(state[1] + b);
+  state[2] = TO32(state[2] + c);
+  state[3] = TO32(state[3] + d);
 
-  /* Zeroize sensitive information.
+  /* Clear sensitive information.
    */
-  MD5_memset ((POINTER)x, 0, sizeof (x));
+  memset ((POINTER)x, 0, sizeof (x));
 }
 
 /* Encodes input (UINT4) into output (unsigned char). Assumes len is
-  a multiple of 4.
- */
+   a multiple of 4.
+*/
 static void Encode (output, input, len)
-unsigned char *output;
-UINT4 *input;
-unsigned long len;
+     unsigned char *output;
+     UINT4 *input;
+     unsigned long len;
 {
   unsigned long i, j;
 
   for (i = 0, j = 0; j < len; i++, j += 4) {
- output[j] = (unsigned char)(input[i] & 0xff);
- output[j+1] = (unsigned char)((input[i] >> 8) & 0xff);
- output[j+2] = (unsigned char)((input[i] >> 16) & 0xff);
- output[j+3] = (unsigned char)((input[i] >> 24) & 0xff);
+    UINT4 ui = input[i];
+    output[j  ] = ui;
+    output[j+1] = ui >>  8;
+    output[j+2] = ui >> 16;
+    output[j+3] = ui >> 24;
   }
 }
 
 /* Decodes input (unsigned char) into output (UINT4). Assumes len is
-  a multiple of 4.
- */
+   a multiple of 4.
+*/
 static void Decode (output, input, len)
-UINT4 *output;
-unsigned char *input;
-unsigned long len;
+     UINT4 *output;
+     unsigned char *input;
+     unsigned long len;
 {
   unsigned long i, j;
+  UINT4 i0, i1, i2, i3;
 
-  for (i = 0, j = 0; j < len; i++, j += 4)
- output[i] = ((UINT4)input[j]) | (((UINT4)input[j+1]) << 8) |
-   (((UINT4)input[j+2]) << 16) | (((UINT4)input[j+3]) << 24);
-}
-
-/* Note: Replace "for loop" with standard memcpy if possible.
- */
-
-static void MD5_memcpy (output, input, len)
-POINTER output;
-POINTER input;
-unsigned long len;
-{
-  unsigned long i;
-
-  for (i = 0; i < len; i++)
- output[i] = input[i];
-}
-
-/* Note: Replace "for loop" with standard memset if possible.
- */
-static void MD5_memset (output, value, len)
-POINTER output;
-int value;
-unsigned long len;
-{
-  unsigned long i;
-
-  for (i = 0; i < len; i++)
- ((char *)output)[i] = (char)value;
+  for (i = 0, j = 0; j < len; i++, j += 4) {
+    i0 = input[j+0]; i1 = input[j+1];
+    i2 = input[j+2]; i3 = input[j+3];
+    output[i] = (i0 | i1 << 8 | i2 << 16 | i3 << 24);
+  }
 }

@@ -5,13 +5,13 @@
  */
 /*
  *	Lots of modifications (new guts, more or less..) by
- *	Matti Aarnio <mea@nic.funet.fi>  (copyright) 1992-1995
+ *	Matti Aarnio <mea@nic.funet.fi>  (copyright) 1992-1999
  */
 
 #define USE_SIGREAPER /* DO Use SIGCLD-driven reaper.. */
 
 #include "hostenv.h"
-#include "malloc.h"
+#include "zmalloc.h"
 #include "splay.h"
 #include "shmmib.h"
 #include "servauth.h"
@@ -66,7 +66,7 @@ struct ctlfile {
 	int	fd;		/* a file descriptor pointing at the file    */
 	char	*vfpfn;		/* a filename for verbose logging of mail    */
 	uid_t	uid;		/* the owner of the control file (= msg file)*/
-	time_t	ctime;		/* when the original file arrived	     */
+	time_t	mtime;		/* original msg file's mtime (~ arrival)     */
 	time_t	envctime;	/* when the transport file was created	     */
 	int	haderror;	/* some errors/diagnostics need processing   */
 	struct vertex	*head;		/* head of the list of groups	     */
@@ -86,7 +86,7 @@ struct ctlfile {
 	int	rcpnts_work;	/* .. yet to deliver ?			     */
 	int	mark;		/* flag used by selector() to pass filenames */
 	int	msgbodyoffset;	/* size of original headers to skip on errrpt*/
-	long	offset[1];	/* array of nlines byte offsets into the file*/
+	int	offset[1];	/* array of nlines byte offsets into the file*/
 };
 
 struct threadgroup {
@@ -151,8 +151,10 @@ struct procinfo {
 	struct threadgroup *thg; /* The thread-ring we are in		*/
 	char	*carryover;	/* Long responces..			*/
 	int	cmdlen;		/* buffer content size			*/
-	char	cmdbuf[1000];	/* outgoing pipe leftovers..		*/
-	char	cmdline[1000];	/* Approximation of the execl() params	*/
+	int	cmdspc;		/* buffer size				*/
+	char	*cmdbuf;	/* outgoing pipe leftovers..		*/
+	char	*cmdline;	/* Approximation of the execl() params	*/
+	int	cmdlspc;	/* cmdline buffer size			*/
 };
 
 /* Stores the offset indices of all addresses that have same channel and host*/
@@ -168,8 +170,8 @@ struct vertex {
 	struct vertex	*nextitem;	/* next in list of scheduled vertices*/
 	struct vertex	*previtem;	/* prev in list of scheduled vertices*/
 	char		*message;	/* some text associated with node    */
-	long		headeroffset;	/* Message headers for this rcpt     */
-	long		drptoffset;	/* IETF-NOTARY DRPT  data	     */
+	int		headeroffset;	/* Message headers for this rcpt     */
+	int		drptoffset;	/* IETF-NOTARY DRPT  data	     */
 	char		*notary;	/* IETF Notary report data	     */
 	int		notaryflg;	/* IETF DSN notary control flags     */
 #define NOT_NEVER   001
@@ -195,13 +197,26 @@ struct mailq {
 	int		auth;		/* what can do */
 	int		fd;		/* FD for I/O (nonblocking-IO) */
 
-	int		inbufspace;
+	char		*challenge;
+
+	int		inbufspace;	/* Raw input buffer stuff */
 	int		inbufsize;
 	int		inbufcount;
 	char		*inbuf;
 
-	int		outbufspace;
+	int		inplinespace;	/* Split into lines */
+	int		inplinesize;
+	char		*inpline;
+
+	int		outbufspace;	/* Output buffer */
 	int		outbufsize;
 	int		outbufcount;
+	int		outcol;
 	char		*outbuf;
 };
+
+#define MQ2MODE_SNMP	0x0001
+#define MQ2MODE_QQ	0x0002
+#define MQ2MODE_FULL	0x0004
+#define MQ2MODE_ETRN	0x0008
+#define MQ2MODE_KILL	0x0010

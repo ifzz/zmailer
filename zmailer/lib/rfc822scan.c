@@ -1,6 +1,9 @@
 /*
  *	Copyright 1990 by Rayan S. Zachariassen, all rights reserved.
  *	This will be free software, but only when it is finished.
+ *
+ *	Fixes done by Matti Aarnio <mea@nic.funet.fi>, and at least
+ *	Zack at <zack@bitmover.com>.
  */
 
 #include "hostenv.h"
@@ -23,28 +26,30 @@
 
 /* ISO Latin 1 (8859) */
 
-#ifdef __alpha /* On Alpha the short is slow to access! */
+#if defined(__alpha)||defined(__alpha__)
+/* On Alpha the short is slow to access! (this array is modified!) */
 int
 #else
+/* All other systems are assumed to contain short-load/store instructions */
 short
 #endif
-	rfc_ctype[256] = {						/* octalcode */
+	rfc_ctype[256] = {					/* octalcode */
 _c,	_c,	_c,	_c,	_c,	_c,	_c,	_c,	/*   0 -   7 */
 _c,	_c|_w,	_l|_c,	_c,	_c,	_r|_c,	_c,	_c,	/*  10 -  17 */
 _c,	_c,	_c,	_c,	_c,	_c,	_c,	_c,	/*  20 -  27 */
 _c,	_c,	_c,	_c,	_c,	_c,	_c,	_c,	/*  30 -  37 */
 _w,	_h,	_s|_h,	_h,	_h,	_h,	_h,	_h,	/*  40 -  47 */
 _s|_h,	_s|_h,	_h,	_h,	_s|_h,	_h,	_s|_h,	_h,	/*  50 -  57 */
-_d|_h,	_d|_h,	_d|_h,	_d|_h,	_d|_h,	_d|_h,	_d|_h,	_d|_h,	/*  60 -  67 */
-_d|_h,	_d|_h,	_s,	_s|_h,	_s|_h,	_h,	_s|_h,	_h,	/*  70 -  77 */
-_s|_h,	_a|_h,	_a|_h,	_a|_h,	_a|_h,	_a|_h,	_a|_h,	_a|_h,	/* 100 - 107 */
-_a|_h,	_a|_h,	_a|_h,	_a|_h,	_a|_h,	_a|_h,	_a|_h,	_a|_h,	/* 110 - 117 */
-_a|_h,	_a|_h,	_a|_h,	_a|_h,	_a|_h,	_a|_h,	_a|_h,	_a|_h,	/* 120 - 127 */
-_a|_h,	_a|_h,	_a|_h,	_s|_h,	_s|_h,	_s|_h,	_h,	_h,	/* 130 - 137 */
-_h,	_a|_h,	_a|_h,	_a|_h,	_a|_h,	_a|_h,	_a|_h,	_a|_h,	/* 140 - 147 */
-_a|_h,	_a|_h,	_a|_h,	_a|_h,	_a|_h,	_a|_h,	_a|_h,	_a|_h,	/* 150 - 157 */
-_a|_h,	_a|_h,	_a|_h,	_a|_h,	_a|_h,	_a|_h,	_a|_h,	_a|_h,	/* 160 - 167 */
-_a|_h,	_a|_h,	_a|_h,	_h,	_h,	_h,	_h,	_c,	/* 170 - 177 */
+_d|_h,	_d|_h,	_d|_h,	_d|_h,	_d|_h,	_d|_h,	_d|_h,	_d|_h,	/* '0' - '7' */
+_d|_h,	_d|_h,	_s,	_s|_h,	_s|_h,	_h,	_s|_h,	_h,	/* '8' -  77 */
+_s|_h,	_a|_h,	_a|_h,	_a|_h,	_a|_h,	_a|_h,	_a|_h,	_a|_h,	/* '@' - 'G' */
+_a|_h,	_a|_h,	_a|_h,	_a|_h,	_a|_h,	_a|_h,	_a|_h,	_a|_h,	/* 'H' - 'O' */
+_a|_h,	_a|_h,	_a|_h,	_a|_h,	_a|_h,	_a|_h,	_a|_h,	_a|_h,	/* 'P' - 'X' */
+_a|_h,	_a|_h,	_a|_h,	_s|_h,	_s|_h,	_s|_h,	_h,	_h,	/* 'Y' - 137 */
+_h,	_a|_h,	_a|_h,	_a|_h,	_a|_h,	_a|_h,	_a|_h,	_a|_h,	/* '`' - 'g' */
+_a|_h,	_a|_h,	_a|_h,	_a|_h,	_a|_h,	_a|_h,	_a|_h,	_a|_h,	/* 'h' - 'o' */
+_a|_h,	_a|_h,	_a|_h,	_a|_h,	_a|_h,	_a|_h,	_a|_h,	_a|_h,	/* 'p' - 'x' */
+_a|_h,	_a|_h,	_a|_h,	_h,	_h,	_h,	_h,	_c,	/* 'y' - 177 */
 	/* The class assignments of the second half are all ILLEGAL */
 _8,	_8,	_8,	_8,	_8,	_8,	_8,	_8,	/* 200 - 207 */
 _8,	_8,	_8,	_8,	_8,	_8,	_8,	_8,	/* 210 - 217 */
@@ -121,10 +126,23 @@ hdr_status(cp, lbuf, n, octo)
 	}
 }
 
-#define MKERROR(msg,prev)	tn = makeToken((msg), strlen(msg)); \
+#if 0
+#define MKERROR(msg,prevp)	tn = makeToken((msg), strlen(msg)); \
 				tn->t_type = Error; \
-				tn->t_next = (prev); \
-				(prev) = tn;
+				tn->t_next = *(prevp); \
+				*(prevp) = tn;
+#else
+static void
+MKERROR(msg, prevp)
+     const char *msg;
+     token822 **prevp;
+{
+  token822 *tn = makeToken((msg), strlen(msg));
+  tn->t_type = Error;
+  tn->t_next = *(prevp);
+  *(prevp) = tn;
+}
+#endif
 
 /*
  * Recognize a compound token, or rather, a token which is defined by
@@ -132,45 +150,55 @@ hdr_status(cp, lbuf, n, octo)
  * the typical example. Comments may be recursive.
  */
 
-u_long
-_hdr_compound(cp, n, cstart, cend, type, tp, tlist, tlistp)
+static u_long _hdr_compound __((const char *cp, int *np,
+				int cstart, int cend,
+				const char **cpp,
+				TokenType type, token822 *tp,
+				token822 **tlist, token822 **tlistp));
+
+static u_long
+_hdr_compound(cp, np, cstart, cend, cpp, type, tp, tlist, tlistp)
 	register const char *cp;
-	long	n;
+	int	*np;
 	int	cstart, cend;
+	const char	**cpp;
 	TokenType	type;
 	token822	*tp, **tlist, **tlistp;
 {
-	token822 *tn;
+	int nest = 1;
+	int len = 1;
+	int n = *np;
 
 	if (*cp != cstart)
 		abort(); /* Sanity check!  Call fault! */
 	++cp, --n;
+
 nextline:
-	for (; n > 0 && *cp != cend; ++cp, --n) {
-		if (*cp == cstart && type == Comment) {
-			u_long nleft;
-			nleft = _hdr_compound(cp, n, cstart, cend,
-					      type, tp, tlist, tlistp);
-			cp += (n - nleft);
-			n   = nleft+1; /* for-loop's --n ! */
-#if 0
-			/* Under certain pathological conditions the "tlistp"
-			   is NULL pointer in here! */
-			if (tlistp == NULL)
-				break;
-			cp = (*tlistp)->t_pname + TOKENLEN(*tlistp) - n;
-#endif
+	for (; n > 0; ++cp, --n, ++len) {
+		if (*cp == cend) {
+			if (--nest <= 0) {
+			    break;
+			}
+		} else if (*cp == cstart) {
+			if (type == Comment)
+				++nest;
+			else {
+				MKERROR("illegal char in compound", tlist);
+			}
 		} else if (*cp == '\\') {
 			if (n == 1) {
 				MKERROR("missing character after backslash",
-					*tlist);
-				n = 0; /* Continue with next line, if existing! */
+					tlist);
+				/* Continue with next line, if existing! */
+				n = 0;
 				break;
 			}
-			++cp, --n;
+			++cp;
+			--n;
+			++len;
 		} else if (*cp == '\r') {
 			/* type = Error; */
-			MKERROR("illegal CR in token",*tlist);
+			MKERROR("illegal CR in token", tlist);
 		}
 	}
 	/* we either found cend, or ran off the end, either may be within
@@ -184,51 +212,73 @@ nextline:
 			*tlistp = (*tlistp)->t_next;
 			n = TOKENLEN(*tlistp);
 			cp = (*tlistp)->t_pname;
+			++len;
 			goto nextline;
 		}
-		/* type = Error; */	/* hey, no reason to refuse a message */
+		/* type=Error; */	/* hey, no reason to refuse a message*/
 		sprintf(msgbuf, "missing closing '%c' in token", cend);
-		MKERROR(msgbuf,*tlist);
-		tp->t_pname = 0;	/* ugly way of signalling scanner */
+		MKERROR(msgbuf, tlist);
+		tp->t_pname = NULL;	/* ugly way of signalling scanner */
 	} else if (*cp == cend) {	/* we found matching terminator */
+		++len;
 		--n;			/* move past terminator */
 	} else {	/* there was an error */
 	  abort() ; /* ??? some sort of sanity check ? */
 	}
 	tp->t_type = type;
-	return n;
+	tp->t_len = len;
+	*np = n;
+	*cpp = (char*)cp;
+	return len;
 }
 
 /* Unfold (see RFC822) the contents of a compound token */
 
-const char *
-_unfold(start, end, t)
-	const char *start, *end;
+static const char * _unfold __((TokenType, int, const char *, const char **, token822*));
+static const char *
+_unfold(type, len, start, cpp, t)
+	TokenType type;
+	int len; /* Total length to unfold */
+	const char *start;
+	const char **cpp;
 	token822 *t;
 {
 	char *s, *cp;
-	/*
-	 * Since we will be ignoring CRLF and copying everything else,
-	 * we know the max length is going to be (end - start) (sic).
-	 * However, I like being conservative about these things...
-	 */
+	const char *cpe = *cpp;
 
-	s = cp = (char *)tmalloc((u_int)(end-start+1));
-	while (start < end) {
-		/* != 'cuz *end is ')' or '"' and lines are randomly alloced */
-		if (*start == '\n') {
-			++start;
-			if (start == end)
-				break;
-			continue;
-		} else if (*start == '\0') {	/* lines are NUL terminated */
-			if (t->t_next)		/* [mea] Sometimes NULL! */
-				t = t->t_next;
-			else
-				break;
-			start = t->t_pname;
+	/* Start and End may be at different tmalloc()ed objects! */
+
+	s = cp = (char *)tmalloc(len +1);
+	while (len > 0 && start != cpe) {
+		if (*start != 0) {
+		  if (*start == '\n') {
+		    ++start;
+		    --len;
+		    continue;
+		  }
+		  --len;
+		  *s++ = *start++;
+		} else {
+		  t = t->t_next;
+		  start = t->t_pname;
+#if 0 /* zero: unfold.. */
+		  *s++ = '\n';
+#else
+		  /* Skip all folding white-space */
+		  while (len > 0 && start != cpe &&
+			 (*start == ' '  || *start == '\t' ||
+			  *start == '\n' || *start == '\r'))
+		    ++start, --len;
+		  /* And replace it with *one* space */
+		  *s++ = ' ';
+#endif
+		  --len;
 		}
-		*s++ = *start++;
+	}
+	*cpp = start +1;
+	if (type == Comment) {
+	  /* Strip trailing spaces at comments */
+	  while (s > cp && s[-1] == ' ') --s;
 	}
 	*s = '\0';
 	return cp;
@@ -286,26 +336,27 @@ token822 * scan822(cpp, nn, c1, c2, allowcomments, tlistp)
 			  continue;
 			if (n == 0 || !(rfc_ctype[(*cp) & 0xFF] & _l)) {
 			  strcpy(msgbuf, "CR without LF (newline)");
-			  MKERROR(msgbuf,tlist);
+			  MKERROR(msgbuf, &tlist);
 			} else if (n > 1 && (rfc_ctype[(*cp) & 0xFF] & _l)) {
 			  while (--n > 0 && (rfc_ctype[(*++cp) & 0xFF] & _l))
 			    continue;
 			  strcpy(msgbuf,"too many newlines (LFs) in field[1]");
-			  MKERROR(msgbuf,tlist);
+			  MKERROR(msgbuf, &tlist);
 			}
 			t.t_type = Fold;
 		} else if (ct & _l) {	/* >= 1 LFs without CR is a fold too */
 			while (--n > 0 && (rfc_ctype[(*++cp) & 0xFF] & _l))
 			  continue;
 			strcpy(msgbuf,"too many newlines (LFs) in field[2]");
-			MKERROR(msgbuf,tlist);
+			MKERROR(msgbuf, &tlist);
 			t.t_type = Fold;
 		} else if ((ct & _s) && (*cp=='(' || *cp=='"' || *cp=='[')) {
 			TokenType	type;
 			char	cend;
+			int len;
 
 			if (*cp == '"') {
-			  cend = *cp;
+			  cend = '"';
 			  type = String;
 			} else if (*cp == '[') {
 			  cend = ']';
@@ -315,28 +366,34 @@ token822 * scan822(cpp, nn, c1, c2, allowcomments, tlistp)
 			  type = Comment;
 			}
 			ot = (tlistp == NULL ? NULL : *tlistp);
-			n = _hdr_compound(cp, n, *cp, cend,
-					  type, &t, &tlist, tlistp);
+			len = _hdr_compound(cp, &n, *cp, cend, cpp,
+					    type, &t, &tlist, tlistp);
 			if (ot != NULL && tlistp != NULL && ot != *tlistp) {
+
 			  /* a compound token crossed line boundary */
-			  (*cpp) = ((*tlistp)->t_pname +
-				    TOKENLEN(*tlistp) - n);
-			  /* copy from ++cp up to and excluding *cpp */
-			  t.t_pname = _unfold(++cp, (*cpp)-1, ot);
+			  /* copy from ++cp for len chars */
+			  t.t_pname = _unfold(type, len, ++cp, cpp, ot);
 			  t.t_len   = strlen(t.t_pname);
-			  /* compensate for calculations below */
-			  (*cpp)  -= t.t_len;
-			  t.t_len += n;
 			} else {
-				if (t.t_pname != NULL)
-					/* magic sign, no ending char */
-					--t.t_len, ++(*cpp);
+			  if (t.t_pname != NULL)
+			    /* magic sign; NULL: no ending char */
+			    --t.t_len, ++(*cpp);
 				/* past first bracketing char */
-				--t.t_len, ++(*cpp);
-				t.t_pname = ++cp;
+			  --t.t_len;  /* ++(*cpp); */
+			  t.t_pname = ++cp;
 			}
+
+			/* compensate for calculations below */
+			(*cpp)  -= t.t_len;
+			t.t_len += n;
+
 		} else if (ct & _s) {		/* specials */
-			if (*cp == ':' && cp[1] == ':')
+			/* Double-colons as with DECNET */
+			if (n > 1 && *cp == ':' && cp[1] == ':')
+				--n;
+			/* Backslash + special:  \@ \! \: ... */
+			if (n > 1 && *cp == '\\' && cp[1] != 0 &&
+			    (rfc_ctype[cp[1] & 0xFF] & _s))
 				--n;
 			--n;
 			t.t_type = Special;
@@ -359,7 +416,7 @@ token822 * scan822(cpp, nn, c1, c2, allowcomments, tlistp)
 				strcpy(msgbuf, "illegal control character");
 			if (t.t_len > n+1)
 				strcat(msgbuf, "s");
-			MKERROR(msgbuf,tlist);
+			MKERROR(msgbuf, &tlist);
 			t.t_type = Atom;
 		}
 		t.t_len -= n;
@@ -379,6 +436,7 @@ token822 * scan822(cpp, nn, c1, c2, allowcomments, tlistp)
 		}
 	} while (n > 0);
 
+	/* Reverse the token822 chain */
 	tp = tn = NULL;
 	for (tp = NULL; tlist != NULL; tlist = tn) {
 		tn = tlist->t_next;

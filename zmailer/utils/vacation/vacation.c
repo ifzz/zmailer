@@ -35,7 +35,7 @@
 #include <fcntl.h>
 #else
 #ifdef  HAVE_DB_H
-#ifdef HAVE_DB_185_H
+#if defined(HAVE_DB_185_H) && !defined(HAVE_DB_OPEN2)
 # include <db_185.h>
 #else
 # include <db.h>
@@ -49,7 +49,7 @@
 /* #include "userdbm.h" */
 
 #include "mail.h"
-#include "malloc.h"
+#include "zmalloc.h"
 #include "libz.h"
 #include "libc.h"
 
@@ -224,7 +224,7 @@ main(argc, argv)
 	    usage();
 	  pw = getpwuid(getuid());
 	  if (!pw) {
-	    fprintf(stderr, "vacation: no such user uid %u.\n", getuid());
+	    fprintf(stderr, "vacation: no such user uid %ld.\n", (long)getuid());
 	    exit(EX_NOUSER);
 	  }
 	} else if (!(pw = getpwnam(*argv))) {
@@ -258,9 +258,16 @@ main(argc, argv)
 			 iflag ? GDBM_NEWDB : GDBM_WRITER,
 			 S_IRUSR|S_IWUSR, NULL );
 #else
+	db = NULL;
+#ifdef HAVE_DB_OPEN2
+	if (dblog)
+	  db_open(VDB ".db", DB_BTREE, DB_CREATE, S_IRUSR|S_IWUSR,
+		  NULL, NULL, &db);
+#else
 	if (dblog)
 	  db = dbopen(VDB ".db", iflag ? (O_RDWR|O_CREAT) : O_RDWR,
 		      S_IRUSR|S_IWUSR, DB_BTREE, NULL);
+#endif
 #endif
 #endif
 
@@ -303,8 +310,13 @@ main(argc, argv)
 	if (dblog)
 	  gdbm_close(db);
 #else
+#ifdef HAVE_DB_OPEN2
+	if (dblog)
+	  db->close(db, 0);
+#else
 	if (dblog)
 	  db->close(db);
+#endif
 #endif
 #endif
 
@@ -646,6 +658,9 @@ recent()
 
 	if (!dblog) return 0;
 
+	memset(&key, 0, sizeof(key));
+	memset(&data, 0, sizeof(data));
+
 	/* get interval time */
 	key.dptr = VIT;
 	key.dsize = sizeof(VIT);
@@ -655,14 +670,22 @@ recent()
 #ifdef HAVE_GDBM_H
 	data = gdbm_fetch(db, key);
 #else
+#ifdef HAVE_DB_OPEN2
+	if (db->get(db, NULL, &key, &data, 0) != 0)
+	  data.dptr = NULL;
+#else
 	if (db->get(db, &key, &data, 0) != 0)
 	  data.dptr = NULL;
+#endif
 #endif
 #endif
 	if (data.dptr == NULL)
 		next = (60*60*24*7); /* One week */
 	else
 		memcpy(&next, data.dptr, sizeof(next));
+
+	memset(&key, 0, sizeof(key));
+	memset(&data, 0, sizeof(data));
 
 	/* get record for this address */
 	key.dptr = from;
@@ -673,8 +696,13 @@ recent()
 #ifdef HAVE_GDBM_H
 	data = gdbm_fetch(db, key);
 #else
+#ifdef HAVE_DB_OPEN2
+	if (db->get(db, NULL, &key, &data, 0) != 0)
+	  data.dptr = NULL;
+#else
 	if (db->get(db, &key, &data, 0) != 0)
 	  data.dptr = NULL;
+#endif
 #endif
 #endif
 	if (data.dptr) {
@@ -697,17 +725,26 @@ setinterval(interval)
 
 	if (!dblog) return;
 
+	memset(&key, 0, sizeof(key));
+	memset(&data, 0, sizeof(data));
+
 	key.dptr = VIT;
 	key.dsize = sizeof(VIT);
+
 	data.dptr = (void*)&interval;
 	data.dsize = sizeof(interval);
+
 #ifdef HAVE_NDBM_H
 	dbm_store(db, key, data, DBM_REPLACE);
 #else
 #ifdef HAVE_GDBM_H
 	gdbm_store(db, key, data, GDBM_REPLACE);
 #else
+#ifdef HAVE_DB_OPEN2
+	db->put(db, NULL, &key, &data, 0);
+#else
 	db->put(db, &key, &data, 0);
+#endif
 #endif
 #endif
 }
@@ -724,18 +761,27 @@ setreply()
 
 	if (!dblog) return;
 
+	memset(&key, 0, sizeof(key));
+	memset(&data, 0, sizeof(data));
+
 	key.dptr = from;
 	key.dsize = strlen(from);
+
 	time(&now);
 	data.dptr = (void*)&now;
 	data.dsize = sizeof(now);
+
 #ifdef HAVE_NDBM_H
 	dbm_store(db, key, data, DBM_REPLACE);
 #else
 #ifdef HAVE_GDBM_H
 	gdbm_store(db, key, data, GDBM_REPLACE);
 #else
+#ifdef HAVE_DB_OPEN2
+	db->put(db, NULL, &key, &data, 0);
+#else
 	db->put(db, &key, &data, 0);
+#endif
 #endif
 #endif
 }

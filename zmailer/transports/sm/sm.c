@@ -16,7 +16,7 @@
 #include <sys/param.h>
 #include <sys/stat.h>
 #include "mail.h"
-#include "malloc.h"
+#include "zmalloc.h"
 #include "zsyslog.h"
 #include "ta.h"
 #ifdef HAVE_UNISTD_H
@@ -76,6 +76,18 @@ int	keep_header8 = 0;	/* Don't do "MIME-2" to the headers */
 int	D_alloc = 0;		/* Memory debugging */
 char    *defcharset;
 
+
+extern RETSIGTYPE sigpipe();
+int gotsigpipe = 0;
+
+RETSIGTYPE
+sigpipe(sig)
+int sig;
+{
+	gotsigpipe = 1;
+	SIGNAL_HANDLE(SIGPIPE, sigpipe);
+}
+
 extern RETSIGTYPE wantout();
 #ifndef MALLOC_TRACE
 extern univptr_t emalloc();
@@ -101,7 +113,8 @@ struct maildesc {
 	char	*name;
 	short	flags;
 	char	*command;
-	char	*argv[20];
+#define MD_ARGVMAX 20
+	char	*argv[MD_ARGVMAX];
 };
 
 extern int writemimeline __(( struct maildesc *mp, FILE *fp, const char *buf, int len, int convertmode));
@@ -186,7 +199,7 @@ main(argc, argv)
 	if (oldsig != SIG_IGN)
 	  SIGNAL_HANDLE(SIGHUP, wantout);
 
-	SIGNAL_IGNORE(SIGPIPE);
+	SIGNAL_HANDLE(SIGPIPE, sigpipe);
 
 	if ((progname = strrchr(argv[0], '/')) == NULL)
 	  progname = argv[0];
@@ -350,11 +363,11 @@ deliver(dp, mp, startrp, endrp, verboselog)
 	struct rcpt *rp = NULL;
 	struct exmapinfo *exp;
 	const char *exs, *exd;
-	int i, j, pid, in[2], out[2], ii = 0;
+	int i, j, pid = 0, in[2], out[2], ii = 0;
 	unsigned int avsize;
 	FILE *tafp = NULL, *errfp = NULL;
 	char *cp = NULL, buf[BUFSIZ], buf2[BUFSIZ];
-	char *ws = NULL;
+	char *ws = NULL, *we = NULL;
 	const char *ds, **av, *s;
 	int status;
 	int content_kind, conversion_prohibited,
@@ -381,25 +394,30 @@ deliver(dp, mp, startrp, endrp, verboselog)
 	    av[i++] = startrp->addr->link->user;
 	}
 	for (j = 0; mp->argv[j] != NULL; ++j) {
-	  ii = i; if (j == 0) ii = 0;
 	  while (i+2 >= avsize) {
 	    avsize *= 2;
 	    av = (const char **)erealloc((char *)av,
 					 sizeof av[0] * avsize);
 	  }
-	  if (strchr(mp->argv[j], '$') == 0) {
+	  if (strchr(mp->argv[j], '$') == NULL) {
 	    if (j > 0)
 	      av[i++] = mp->argv[j];
 	    continue;
 	  }
 	  rp = startrp;
 	  do {
+
+	    /* Even argv[0] MAY have $-expansions.. */
+	    ii = i; if (j == 0) ii = 0;
+
 	    while (i+2 >= avsize) {
 	      avsize <<= 1;
 	      av = (const char **)erealloc((char *)av,
 					   sizeof av[0] * avsize);
 	    }
-	    for (cp = mp->argv[j], ws = buf; *cp != '\0'; ++cp) {
+	    ws = buf;
+	    we = buf + sizeof(buf);
+	    for (cp = mp->argv[j]; *cp != '\0'; ++cp) {
 	      if (*cp == '$') {
 		switch (*++cp) {
 		case 'g':
@@ -413,7 +431,8 @@ deliver(dp, mp, startrp, endrp, verboselog)
 		  rp = rp->next;
 		  break;
 		case 'U':
-		  strcpy(buf2, rp->addr->user);
+		  strncpy(buf2, rp->addr->user, sizeof(buf2));
+		  buf2[sizeof(buf2)-1] = 0;
 		  strlower(buf2);
 		  ds = buf2;
 		  rp = rp->next;
@@ -441,21 +460,32 @@ deliver(dp, mp, startrp, endrp, verboselog)
 			  *cp, dp->msgfile);
 		  warning(msg, mp->name);
 		} else {
-		  strcpy(ws, ds);
-		  ws += strlen(ds);
+		  int len = strlen(ds);
+		  if (ws + len >= we)
+		    break; /* D'uh :-( */
+		  memcpy(ws, ds, len+1);
+		  ws += len;
 		}
 	      } else
-		*ws++ = *cp;
+		if (ws < we)
+		  *ws++ = *cp;
 	    }
-	    *ws = '\0';
-	    av[ii] = emalloc((u_int)(strlen(buf)+1));
+	    if (ws < we)
+	      *ws = '\0';
+	    else
+	      we[-1] = '\0'; /* Trunk in all cases */
 	    /* not worth freeing this stuff */
-	    strcpy((char*)av[ii], buf);
+	    av[ii] = strdup(buf);
 	    if (j > 0)
 	      ++i;
 	  } while (rp != startrp && rp != endrp);
+	  /* End of: "do {" */
 	}
+	/* End of: "for (j = ...) {" */
 	av[i] = NULL;
+
+	gotsigpipe = 0;
+
 	/* now we can fork off and run the command... */
 	if (pipe(out) < 0) {
 	  for (rp = startrp; rp != endrp; rp = rp->next) {
@@ -482,7 +512,7 @@ deliver(dp, mp, startrp, endrp, verboselog)
 	if (verboselog) {
 	  const char **p = av;
 	  fprintf(verboselog,"To run UID=%d GID=%d ARGV[] =",
-		  getuid(), getgid());
+		  (int)getuid(), (int)getgid());
 	  for ( ;*p != NULL; ++p) {
 	    fprintf(verboselog," '%s'", *p);
 	  }
@@ -527,9 +557,9 @@ deliver(dp, mp, startrp, endrp, verboselog)
 	  }
 	  return;
 	}
-	close(out[0]);
+	close(out[0]); /* child ends.. */
 	close(in[1]);
-	tafp = fdopen(out[1], "w");
+	tafp = fdopen(out[1], "w"); /* parent ends .. */
 	errfp = fdopen(in[0], "r");
 	/* read any messages from its stdout/err on in[0] */
 
@@ -645,7 +675,8 @@ deliver(dp, mp, startrp, endrp, verboselog)
 	  case 8:		/* 8BIT */
 	    if (!can_8bit && !ascii_clean) {
 	      convertmode = _CONVERT_QP;
-	      downgrade_headers(startrp, convertmode, verboselog);
+	      if (!downgrade_headers(startrp, convertmode, verboselog))
+		convertmode = _CONVERT_NONE;
 	    }
 	    break;
 	  case 9:		/* QUOTED-PRINTABLE */
@@ -653,7 +684,8 @@ deliver(dp, mp, startrp, endrp, verboselog)
 	      /* Force(d) to decode Q-P while transfer.. */
 	      convertmode = _CONVERT_8BIT;
 	      /*  UPGRADE TO 8BIT !  */
-	      qp_to_8bit(startrp);
+	      if (!qp_to_8bit(startrp))
+		convertmode = _CONVERT_NONE;
 	      content_kind = 10;
 	      ascii_clean = 0;
 	    }
@@ -670,9 +702,12 @@ deliver(dp, mp, startrp, endrp, verboselog)
  	/* Add the "Return-Path:" is it is desired, but does not yet
 	   exist.. */
 	if (mp->flags & MO_RETURNPATH) {
-	  char **hdrs = has_header(startrp,"Return-Path:");
 	  const char *uu = startrp->addr->link->user;
-	  if (hdrs) delete_header(startrp, hdrs);
+	  char **hdrs;
+	  do {
+	    hdrs = has_header(startrp,"Return-Path:");
+	    if (hdrs) delete_header(startrp, hdrs);
+	  } while (hdrs);
 	  if (strcmp(startrp->addr->link->channel,"error")==0)
 	    uu = "";
 	  append_header(startrp,"Return-Path: <%.999s>", uu);
@@ -691,7 +726,8 @@ deliver(dp, mp, startrp, endrp, verboselog)
 	}
 
 	/* append message body itself */
-	if ((i = appendlet(dp, mp, tafp, verboselog, convertmode)) != EX_OK) {
+	i = appendlet(dp, mp, tafp, verboselog, convertmode);
+	if (i != EX_OK && !gotsigpipe) {
 	  for (rp = startrp; rp != endrp; rp = rp->next) {
 	    notaryreport(rp->addr->user,"failed",
 			 /* Could indicate: 4.3.1 - mail system full ?? */
@@ -704,6 +740,8 @@ deliver(dp, mp, startrp, endrp, verboselog)
 	  sleep(1);
 	  kill(pid, SIGKILL);
 	  wait(NULL);
+	  fclose(tafp); /* FP/pipe cleanups */
+	  fclose(errfp);
 	  return;
 	}
 
@@ -849,10 +887,8 @@ appendlet(dp, mp, fp, verboselog, convertmode)
 #if !(defined(HAVE_MMAP) && defined(TA_USE_MMAP))
 	  char iobuf[BUFSIZ];
 	  FILE *mfp = fdopen(mfd,"r");
-
-	  fseek(mfp,(off_t)(dp->msgbodyoffset),SEEK_SET);
-
 	  setvbuf(mfp, iobuf, _IOFBF, sizeof(iobuf));
+	  fseek(mfp, dp->msgbodyoffset, SEEK_SET);
 
 #define MFPCLOSE i = dup(mfd); fclose(mfp); dup2(i,mfd); close(i);
 
@@ -866,7 +902,7 @@ appendlet(dp, mp, fp, verboselog, convertmode)
 	  /*
 	     if(verboselog) fprintf(verboselog,
 	     "sm: Convert mode: %d, fd=%d, fdoffset=%d, bodyoffset=%d\n",
-	     convertmode, mfd, (int)lseek(mfd,(off_t)0,1),
+	     convertmode, mfd, (int)lseek(mfd, (off_t)0, SEEK_CUR),
 	     dp->msgbodyoffset);
 	   */
 
@@ -1253,7 +1289,7 @@ readsmcf(file, mailer)
 	}
 	SKIPWHILE(isspace, cp);
 	i = 0;
-	while (isascii(*cp) && !isspace(*cp)) {
+	while (isascii(*cp) && !isspace(*cp) && i < MD_ARGVMAX) {
 	  if (*cp == '\0')
 	    break;
 	  m.argv[i++] = cp;
@@ -1314,7 +1350,7 @@ struct ctldesc *dp;
 	    if (errno == EINTR)
 	      continue;
 	    readalready = 0;
-	    lseek(mfd,dp->msgbodyoffset,0);
+	    lseek(mfd, dp->msgbodyoffset, SEEK_SET);
 	    return 0;
 	  }
 	  lastwasnl = (let_buffer[i-1] == '\n');
@@ -1322,14 +1358,14 @@ struct ctldesc *dp;
 	  bufferfull++;
 	  for (i=0; i < readalready; ++i)
 	    if (128 & (let_buffer[i])) {
-	      lseek(mfd,dp->msgbodyoffset,0);
+	      lseek(mfd, dp->msgbodyoffset, SEEK_SET);
 	      /* We propably have not read everything of the file! */
 	      readalready = 0;
 	      return 0;		/* Not clean ! */
 	    }
 	}
 	/* Got to EOF, and still it is clean 7-BIT! */
-	lseek(mfd,dp->msgbodyoffset,0);
+	lseek(mfd, dp->msgbodyoffset, SEEK_SET);
 
 	if (bufferfull > 1)	/* not all in memory, need to reread */
 	  readalready = 0;

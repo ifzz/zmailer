@@ -12,6 +12,7 @@
 #include <ctype.h>
 #include <pwd.h>
 #include <grp.h>
+#include <unistd.h>
 #include "scheduler.h"
 #include "prototypes.h"
 #include "mail.h"
@@ -24,38 +25,43 @@
 static void celink __((struct config_entry *, struct config_entry **, struct config_entry **));
 static int readtoken __((FILE *fp, char *buf, int buflen, int *linenump));
 static u_int parse_intvl __((char *string));
+static int paramparse __((char *line));
 
-static int rc_command  __((char *key, char *arg, struct config_entry *ce));
-static int rc_expform  __((char *key, char *arg, struct config_entry *ce));
-static int rc_expiry   __((char *key, char *arg, struct config_entry *ce));
-static int rc_group    __((char *key, char *arg, struct config_entry *ce));
-static int rc_interval __((char *key, char *arg, struct config_entry *ce));
-static int rc_maxchannel __((char *key, char *arg, struct config_entry *ce));
-static int rc_maxring  __((char *key, char *arg, struct config_entry *ce));
-static int rc_maxta    __((char *key, char *arg, struct config_entry *ce));
-static int rc_idlemax  __((char *key, char *arg, struct config_entry *ce));
-static int rc_retries  __((char *key, char *arg, struct config_entry *ce));
-static int rc_user     __((char *key, char *arg, struct config_entry *ce));
-static int rc_skew     __((char *key, char *arg, struct config_entry *ce));
-static int rc_bychannel __((char *key, char *arg, struct config_entry *ce));
-static int rc_ageorder __((char *key, char *arg, struct config_entry *ce));
-static int rc_queueonly __((char *key, char *arg, struct config_entry *ce));
-static int rc_deliveryform __((char *key, char *arg, struct config_entry *ce));
-static int rc_overfeed __((char *key, char *arg, struct config_entry *ce));
-static int rc_priority __((char *key, char *arg, struct config_entry *ce));
-static int rc_nice     __((char *key, char *arg, struct config_entry *ce));
-static int rc_syspriority __((char *key, char *arg, struct config_entry *ce));
-static int rc_sysnice     __((char *key, char *arg, struct config_entry *ce));
+#define RCKEYARGS __((char *key, char *arg, struct config_entry *ce))
+
+static int rc_command		RCKEYARGS;
+static int rc_expform		RCKEYARGS;
+static int rc_expiry		RCKEYARGS;
+static int rc_group		RCKEYARGS;
+static int rc_interval		RCKEYARGS;
+static int rc_maxchannel	RCKEYARGS;
+static int rc_maxring		RCKEYARGS;
+static int rc_maxta		RCKEYARGS;
+static int rc_idlemax		RCKEYARGS;
+static int rc_retries		RCKEYARGS;
+static int rc_user		RCKEYARGS;
+static int rc_skew		RCKEYARGS;
+static int rc_bychannel		RCKEYARGS;
+static int rc_ageorder		RCKEYARGS;
+static int rc_queueonly		RCKEYARGS;
+static int rc_deliveryform	RCKEYARGS;
+static int rc_overfeed		RCKEYARGS;
+static int rc_priority		RCKEYARGS;
+static int rc_nice		RCKEYARGS;
+static int rc_syspriority	RCKEYARGS;
+static int rc_sysnice		RCKEYARGS;
 
 extern int errno;
-
-static const char *mailbin = NULL;
 
 extern struct group *getgrnam();
 extern struct passwd *getpwnam();
 
 struct config_entry *default_entry = NULL;
 struct config_entry *rrcf_head     = NULL;
+
+/* where the  MAILQv2  authentication dataset file is ? */
+char * mq2authfile = NULL;
+
 
 static struct rckeyword {
 	const char	*name;
@@ -264,7 +270,16 @@ readconfig(file)
 	  if (verbose)
 	    printf("read '%s' %d\n",  line, n);
 	  if (n == 1) {
-	    /* Selector entry */
+	    /* Selector entry - or "PARAM" */
+	    if (cistrncmp(line,"PARAM",5) == 0) {
+	      if (paramparse(line+5)) {
+		fprintf(stderr, "%s: illegal syntax at %s:%d\n",
+			progname, file, linenum);
+		++errflag;
+	      }
+	      continue;;
+	    }
+
 	    if (ce != NULL)
 	      celink(ce, &head, &tail);
 	    ce = (struct config_entry *)emalloc(sizeof (struct config_entry));
@@ -312,9 +327,10 @@ readconfig(file)
 		  *cp = '\0';
 	      }
 	    }
-#if 1
-	    ce->mark = 0;
-#endif
+
+	    if (ce)
+	      ce->mark = 0;
+
 	    for (rckp = &rckeys[0]; rckp->name != NULL ; ++rckp)
 	      if (cistrcmp(rckp->name, line) == 0) {
 		errflag += (*rckp->parsef)(line, a, ce);
@@ -327,7 +343,8 @@ readconfig(file)
 	      ++errflag;
 	    }
 	  } else {
-	    fprintf(stderr, "%s: illegal syntax\n", progname);
+	    fprintf(stderr, "%s: illegal syntax at %s:%d\n",
+		    progname, file, linenum);
 	    ++errflag;
 	  }
 	}
@@ -520,19 +537,7 @@ static int rc_command(key, arg, ce)
 	char *cp, **av, *argv[100];
 	int j;
 
-	if (*arg != '/') {
-
-	  if (mailbin == NULL)
-	    mailbin = getzenv("MAILBIN");
-	  if (mailbin == NULL)
-	    mailbin = MAILBIN;
-
-	  ce->command = emalloc(strlen(mailbin)+1+strlen(qdefaultdir)
-				+1+strlen(arg)+1);
-	  sprintf(ce->command,
-		  "%s/%s/%s", mailbin, qdefaultdir, arg);
-	} else
-	  ce->command = strsave(arg);
+	ce->command = strsave(arg);
 	j = 0;
 	for (cp = ce->command; *cp != '\0' && isascii(*cp);) {
 	  argv[j++] = cp;
@@ -562,6 +567,10 @@ static int rc_command(key, arg, ce)
 	  for (av = &ce->argv[0]; *av != NULL; ++av)
 	    if (strcmp(*av, replchannel) == 0) {
 	      ce->flags |= CFG_BYCHANNEL;
+	      if (ce->channel && strtok(ce->channel,"[{*?") != NULL)
+		ce->flags |= CFG_WITHHOST; /* Well, sort of..
+					      Channel-part is wild-card, thus
+					      it is also very restrictive.. */
 	      break;
 	    }
 	}
@@ -817,4 +826,51 @@ static int rc_queueonly(key, arg, ce)
 {
 	ce->flags |= CFG_QUEUEONLY;
 	return 0;
+}
+
+extern int mailqmode;
+
+static int paramparse(line)
+	char *line;
+{
+	char *s, *a = NULL;
+
+	if ((s = strchr(line, '=')) != NULL) {
+	  char *p = s-1;
+	  *s = '\0';
+	  while (p >= line && (*p == ' ' || *p == '\t'))
+	    *p-- = '\0';
+	  a = s+1;
+	  while (*a == ' ' || *a == '\t') ++a;
+	  if (*a == '"') {
+	    ++a;
+	    s = a;
+	    while (*s && *s != '"') {
+	      if (*s == '\\' && s[1] != 0)
+		++s;
+	      ++s;
+	    }
+	    if (*s)
+	      *s = '\0';
+	  }
+	}
+
+	if (cistrcmp(line,"authfile")==0 && a) {
+	  if (mq2authfile)
+	    free(mq2authfile);
+	  mq2authfile = strsave(a);
+
+	  if (mq2authfile && access(mq2authfile,R_OK)==0)
+	    mailqmode = 2;
+
+	  return 0;
+	}
+
+	if (cistrcmp(line,"mailqsock")==0 && a) {
+	  if (mailqsock)
+	    free(mailqsock);
+	  mailqsock = strsave(a);
+	  return 0;
+	}
+	return 1;
 }

@@ -15,24 +15,26 @@ MAILBIN=	$(prefix)@MAILBIN@
 DEFS=		@DEFS@
 INSTALL=	@INSTALL@
 SCHEDULER_INCL=	@GENINCL@ @INCLRESOLV@ @INCLWRAP@
-SCHEDULER_LIB=	@GETPWLIB@ @LIBWRAP@ @LIBRESOLV@ @LIBSOCKET@
+SCHEDULER_LIB=	@LIBWRAP@ @LIBRESOLV@ @LIBSOCKET@ # @GETPWLIB@
 MAILQ_INCL=	@GENINCL@ @INCLRESOLV@
 MAILQ_LIB=	@LIBRESOLV@ @LIBSOCKET@
 #   Above the  LIBSOCKET (for SysVR4) must be last
 #
 INCL=		-I$(srcdir)/$(TOPDIR)/include -I$(TOPDIR)/include -I$(TOPDIR)
-CFLAGS=		$(COPTS) $(CPPFLAGS) $(DEFS) $(SCHEDULER_INCL) $(INCL)
-MQCFLAGS=	$(COPTS) $(CPPFLAGS) $(DEFS) $(MAILQ_INCL) $(INCL)
+CFLAGS=		$(COPTS) $(CPPFLAGS) $(DEFS) $(INCL) $(SCHEDULER_INCL)
+MQCFLAGS=	$(COPTS) $(CPPFLAGS) $(DEFS) $(INCL) $(MAILQ_INCL)
 LIBMALLOC=	@LIBMALLOC@
 LIBMALLOCDEB=	$(TOPDIR)/libmalloc/libmalloc_d.a-a
-LIB=		-L$(TOPDIR)/libs -lz -lzc  -lta $(LIBMALLOC)
+LIB=		-L$(TOPDIR)/libs -lzm -lzc  -lta $(LIBMALLOC)
 LIBDEB=		$(TOPDIR)/libs/libtag
 LINTLIB=	$(TOPDIR)/lib/llib-llibz.ln $(TOPDIR)/libc/llib-llibzc.ln $(TOPDIR)/transports/libta/llib-llibta.ln
 #
 OBJS=	scheduler.o readconfig.o conf.o agenda.o transport.o pipes.o \
-	update.o qprint.o msgerror.o resources.o threads.o wantconn.o
+	update.o qprint.o msgerror.o resources.o threads.o wantconn.o \
+	mq2.o mq2auth.o
 SOURCE=	scheduler.c readconfig.c conf.c agenda.c transport.c pipes.c \
-	update.c qprint.c msgerror.c resources.c threads.c wantconn.c
+	update.c qprint.c msgerror.c resources.c threads.c wantconn.c \
+	mq2.c mq2auth.c
 
 all:	$(LIBDEB) $(PROGRAM) mailq
 
@@ -96,9 +98,9 @@ $(TOPDIR)/libc/libzc.a-a:
 $(TOPDIR)/libc/libzc.a:
 	cd $(TOPDIR)/libc ; $(MAKE) $(MFLAGS)
 
-$(TOPDIR)/lib/libz.a-a:
+$(TOPDIR)/lib/libzm.a-a:
 	cd $(TOPDIR)/lib ; $(MAKE) $(MFLAGS)
-$(TOPDIR)/lib/libz.a:
+$(TOPDIR)/lib/libzm.a:
 	cd $(TOPDIR)/lib ; $(MAKE) $(MFLAGS)
 
 $(TOPDIR)/libsh/libsh.a-a:
