@@ -4,7 +4,7 @@
  */
 /*
  *	Lots of modifications (new guts, more or less..) by
- *	Matti Aarnio <mea@nic.funet.fi>  (copyright) 1992-1996
+ *	Matti Aarnio <mea@nic.funet.fi>  (copyright) 1992-1999
  */
 
 #include "hostenv.h"
@@ -204,7 +204,7 @@ msgerror(vp, offset, message)
 	vp->cfp->haderror = 1;
 	fprintf(fp, "%c%c%ld:%ld:%ld::%ld\t%s\t%s\n",
 		_CF_DIAGNOSTIC, _CFTAG_NORMAL, offset,
-		vp->headeroffset, vp->drptoffset,
+		(long)vp->headeroffset, (long)vp->drptoffset,
 		time(NULL), notary, message);
 	fflush(fp);
 #ifdef HAVE_FSYNC
@@ -376,7 +376,7 @@ reporterrs(cfpi)
 	struct ctlfile *cfpi;
 {
 	int i, n, wroteheader, byteidx, headeridx = -1, drptidx, fd;
-	long *lp;
+	int *lp;
 	time_t tstamp;
 	char *midbuf, *cp, *eaddr;
 	char *deliveryform;
@@ -591,12 +591,12 @@ reporterrs(cfpi)
 
 	{
 	  char *dom = mydomain(); /* transports/libta/buildbndry.c */
-	  char fname[20];
 	  struct stat stbuf;
 
-	  fstat(fileno(errfp),&stbuf);
-	  sprintf(fname,"%ld",(long)stbuf.st_ino);
-	  taspoolid(boundarystr, sizeof(boundarystr), stbuf.st_ctime, fname);
+	  fstat(fileno(errfp),&stbuf); /* doesn't matter exactly what,
+					  as long as unique */
+	  taspoolid(boundarystr, stbuf.st_ctime, (long)stbuf.st_ino);
+
 	  strcat(boundarystr, "=_/");
 	  strcat(boundarystr, dom);
 	}
@@ -639,7 +639,7 @@ reporterrs(cfpi)
 	  putc('\n',errfp);
 	}
 	/* rfc822date() returns a string with trailing newline! */
-	fprintf(errfp, "Arrival-Date: %s", rfc822date(&cfpi->ctime));
+	fprintf(errfp, "Arrival-Date: %s", rfc822date(&cfpi->mtime));
 	fprintf(errfp, "\n");
 
 	/* Now scan 'em all again for IETF-NOTARY */

@@ -41,9 +41,9 @@ search_bin(sip)
 	register char *s;
 	off_t	top, bot;
 	int	i, retry;
-	conscell *tmp;
 	struct spblk *spl;
 	struct file_map *fm;
+
 #ifdef	HAVE_MMAP
 	/* This  fstat()  for possible seq_remap() trigger causes a bit
 	   more syscalls, than is really necessary.   Therefore it is
@@ -143,7 +143,7 @@ search_bin(sip)
 	      if (!isascii(c) || isspace(c))
 		break;
 	    }
-	    return newstring(strnsave(cp, (u_int)(s - cp)));
+	    return newstring(dupnstr(cp, s - cp), s - cp);
 	  }
 	  if (i < 0)
 	    top = mid - 1;
@@ -169,7 +169,7 @@ search_bin(sip)
 
 	  if (fgets(fixbuf, sizeof fixbuf, fp) == NULL) {
 	    if (!retry && ferror(fp)) {
-	      close_seq(sip);
+	      close_seq(sip, "search_bin");
 	      ++retry;
 	      goto reopen;
 	    }
@@ -198,7 +198,7 @@ search_bin(sip)
 	      if (!isascii(c) || isspace(c))
 		break;
 	    }
-	    return newstring(strnsave(cp, s - cp));
+	    return newstring(dupnstr(cp, s - cp), s - cp);
 	  } else
 	    bot = mid;
 	}
@@ -231,7 +231,7 @@ search_bin(sip)
 	      if (!isascii(c) || isspace(c))
 		break;
 	    }
-	    return newstring(strnsave(cp, s - cp));
+	    return newstring(dupnstr(cp, s - cp), s - cp);
 	  }
 	}
 #endif

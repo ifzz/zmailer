@@ -111,30 +111,6 @@ s_nth(list, n)
 }
 
 
-#ifdef CONSCELL_PREV
-/*
- * Set the back-pointers (->prev) for the passed structure.
- * This is used by the setf facility to figure out where stuff is stashed.
- */
-
-void
-s_set_prev(prev, list)
-	register conscell *prev, *list;
-{
-	while (list != NULL) {
-		list->prev = prev;
-		if (LIST(list))
-			s_set_prev(list, car(list));
-		prev = list;
-		list = cdr(list);
-		if (list == envarlist)
-			return;
-		else if (list)
-			list->pflags = 1;
-	}
-}
-#endif
-
 /*
  * Does a string contain any metacharacters that might be misinterpreted
  * if the string was read in as is?
@@ -242,26 +218,26 @@ s_catstring(s)
 	conscell *s;
 {
 	char *cp, *buf;
-	conscell *sp, *tmp;
+	conscell *sp; /* No need to protect below */
 	int len, quoted;
 
 	if (cdr(s) == NULL)
 		return s;
 	len = 0;
 	for (sp = s; sp != NULL; sp = cdr(sp))
-		if (sp->string)
-			len += strlen(sp->string);
+		if (STRING(sp) && sp->cstring)
+			len += sp->slen;
 	quoted = 0;
-	cp = buf = (char *)tmalloc(len+1);
+	cp = buf = mallocstr(len);
 	for (sp = s; sp != NULL; sp = cdr(sp)) {
-		if (sp->string) {
-			strcpy(cp, sp->string);
-			cp += strlen(cp);
+		if (STRING(sp) && sp->cstring) {
+			memcpy(cp, sp->cstring, sp->slen);
+			cp     += sp->slen;
 			quoted += ISQUOTED(sp);
 		}
 	}
 	*cp++ = '\0';
-	sp = newstring(buf);
+	sp = newstring(buf, len);
 	if (quoted)
 		sp->flags |= QUOTEDSTRING;
 	return sp;
@@ -280,6 +256,8 @@ s_read(fp)
 	register conscell **listp;
 	char	ech, buf[8096];
 	conscell *list;
+	GCVARS1;
+	memtypes oval = stickymem;
 
 	if (feof(fp))
 		return NULL;
@@ -288,15 +266,12 @@ s_read(fp)
 			break;
 	bp = buf;
 	list = NULL;	/* lint */
+	GCPRO1(list);
 	switch (ch) {
 	case '(':
 		list = newcell();
 		list->flags = 0;
 		cdr(list) = NULL;
-#ifdef CONSCELL_PREV
-		list->prev = 0;
-		list->pflags = 0;
-#endif
 		listp = &car(list);
 		do {
 			if ((*listp = s_read(fp)) == NULL)
@@ -309,17 +284,11 @@ s_read(fp)
 		break;
 	case ')':
 	case EOF:
+		UNGCPRO1;
 		return NULL;
 	case '"':	/* quoted symbol */
 	case '\'':
 		ech = ch;
-		list = newcell();
-		cdr(list) = NULL;
-		list->flags = NEWSTRING;	/* string */
-#ifdef CONSCELL_PREV
-		list->prev = 0;
-		list->pflags = 0;
-#endif
 		while ((ch = getc(fp)) != EOF && ch != ech) {
 			if (ch == '\\')
 				if ((ch = getc(fp)) == EOF)
@@ -327,16 +296,9 @@ s_read(fp)
 			*bp++ = ch;
 		}
 		*bp = '\0';
-		list->string = strnsave(buf, bp - buf);
+		list = newstring(dupnstr(buf, bp - buf), bp-buf);
 		break;
 	default:	/* normal symbol */
-		list = newcell();
-		cdr(list) = NULL;
-		list->flags = NEWSTRING;	/* string */
-#ifdef CONSCELL_PREV
-		list->prev = 0;
-		list->pflags = 0;
-#endif
 		*bp++ = ch;
 		while ((ch = getc(fp)) != EOF && isascii(ch) &&
 		       !isspace(ch) && ch != '(' && ch != ')') {
@@ -348,10 +310,13 @@ s_read(fp)
 		if (ch != EOF)
 			ungetc(ch, fp);
 		*bp = '\0';
-		list->string = strnsave(buf, bp - buf);
+		stickymem = MEM_MALLOC;
+		list = newstring(dupnstr(buf, bp - buf), bp-buf);
+		stickymem = oval;
 		break;
 	}
 	/* putc('>', runiofp);s_grind(list, runiofp); putc('\n', runiofp); */
+	UNGCPRO1;
 	return list;
 }
 
@@ -364,12 +329,19 @@ s_listify(ac, av)
 	register int ac;
 	register const char *av[];
 {
-	register conscell **pl, *tmp;
-	conscell *l;
+	register conscell **pl;
+	conscell *l = NIL;
+	GCVARS1;
 
-	for (l = NIL, pl = &car(l); ac-- > 0 && *av != NULL; pl = &cdr(*pl))
-		*pl = conststring(*av++);
-	*pl = NULL;
+	GCPRO1(l);
+	pl = &car(l);
+	for ( ;ac > 0 && *av != NULL; --ac,++av) {
+		int slen = strlen(av[0]);
+		*pl = newstring(dupnstr(av[0], slen), slen);
+		pl = &cdr(*pl);
+		*pl = NULL;
+	}
+	UNGCPRO1;
 	return l;
 }
 
@@ -380,14 +352,17 @@ s_pushstack(l, s)
 	conscell *l;
 	const char *s;
 {
-	conscell *d, *tmp;
-	memtypes oval = stickymem;
+	conscell *d;
+	GCVARS1;
+	int slen = strlen(s);
 
-	stickymem = MEM_MALLOC;
-	d = newstring(strsave(s));
-	cdr(d) = conststring(" \n");
+	d = newstring(dupnstr(s, slen), slen);
+
+	GCPRO1(d);
+	cdr(d) = conststring(" \n", 2);
 	cddr(d) = l;
-	stickymem = oval;
+	UNGCPRO1;
+
 	return d;
 }
 
@@ -400,12 +375,14 @@ s_popstack(l)
 	d = l;
 	l = cdr(l);
 	cdr(d) = NULL;
-	s_free_tree(d);
+	/* s_free_tree(d); */
 	return l;
 }
 
+#if 0 /* New GC/newcell() will take over this */
 conscell *
 newcell()
 {
 	return (conscell*)tmalloc(sizeof(conscell));
 }
+#endif

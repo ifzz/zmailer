@@ -41,7 +41,6 @@ search_seq(sip)
 {
 	FILE *fp;
 	register char *cp, *s;
-	conscell *tmp;
 	struct spblk *spl;
 	int retry;
 	char buf[BUFSIZ];
@@ -106,11 +105,11 @@ reopen:
 			for (s = cp; *s != '\0'; ++s)
 			  if (!isascii((*s)&0xFF) || isspace((*s)&0xFF))
 			    break;
-			return newstring(strnsave(cp, s - cp));
+			return newstring(dupnstr(cp, s - cp), s - cp);
 		}
 	}
 	if (!retry && ferror(fp)) {
-		close_seq(sip);
+		close_seq(sip,"search_seq");
 		++retry;
 		goto reopen;
 	}
@@ -123,8 +122,9 @@ reopen:
  */
 
 void
-close_seq(sip)
+close_seq(sip,comment)
 	search_info *sip;
+	const char *comment;
 {
 	struct file_map *fm;
 	struct spblk *spl;
@@ -176,7 +176,7 @@ _open_seq(sip, mode)
 	    && (*mode == 'w' || *mode == 'a'
 		|| (*mode == 'r' && *(mode+1) == '+'))
 	    && spl->mark != O_RDWR) {
-		close_seq(sip);
+		close_seq(sip,"_open_seq");
 		imode = O_RDWR;
 	} else
 		imode = O_RDONLY;
@@ -270,7 +270,7 @@ add_seq(sip, value)
 	else
 		fprintf(fp, "%s\t%s\n", sip->key, value);
 	rc = fflush(fp);
-	close_seq(sip);
+	close_seq(sip,"add_seq");
 	return rc;
 }
 
@@ -473,7 +473,7 @@ readchunk(file, foffset)
 	FILE *fp = NULL;
 	register char *cp;
 	char *as;
-	conscell *tmp, *l;
+	conscell *l;
 	struct spblk *spl;
 	int retry, flag, len;
 	spkey_t symid;
@@ -551,11 +551,11 @@ reopen:
 		return NULL;
 	}
 
-	cp = as = tmalloc(len+1);
+	cp = as = malloc(len+1);
 	l = NULL;
 	flag = 0;
 	buf[sizeof buf - 1] = '\0';
-	while (fgets(buf, sizeof buf, fp) != NULL) {
+	while (fgets(buf, sizeof(buf)-1, fp) != NULL) {
 		/* printaliases (actually hdr_print()) prints lines < 80 char */
 
 		if (buf[0] == '\t')
@@ -576,22 +576,25 @@ reopen:
 		}
 		flag = 1;
 	}
-	if (cp > as) {
-		*cp = 0;
-		l = newstring(as);
-	}
+	if (cp > as)
+		l = newstring(dupnstr(as, cp-as), cp-as);
+	free(as);
+	as = NULL;
+
 	if (!retry && ferror(fp)) {
-		if (l != NULL) {
-			if (stickymem == MEM_MALLOC)
-				s_free_tree(l);
-			l = NULL;
-		}
+		/* if (l != NULL) {
+		   if (stickymem == MEM_MALLOC)
+		   s_free_tree(l);
+		   l = NULL;
+		   }
+		*/
+		l = NULL;
 		fclose(fp);
 		free(fm);
+		if (as) free(as);
 		spl->data = NULL;
 		++retry;
 		goto reopen;
 	}
-
 	return l;
 }

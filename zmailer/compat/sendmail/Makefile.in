@@ -18,9 +18,9 @@ LN_S=		"@LN_S@"
 MKDIR=		@MKDIR@
 #
 INCL=           -I$(srcdir)/$(TOPDIR)/include -I$(TOPDIR)/include -I$(TOPDIR)
-LIB=            -L$(TOPDIR)/libs -lz -lzc
+LIB=            -L$(TOPDIR)/libs -lzm -lzc
 LIBDEB=         $(TOPDIR)/libs/libtag
-CFLAGS=         $(COPTS) $(CPPFLAGS) $(DEFS) $(SENDMAIL_INCL) $(INCL)
+CFLAGS=         $(COPTS) $(CPPFLAGS) $(DEFS) $(INCL) $(SENDMAIL_INCL)
 SENDMAILPATH=	$(prefix)@SENDMAILPATH@
 
 SOURCE=		sendmail.c
@@ -46,7 +46,7 @@ version.c: $(srcdir)/sendmail.c $(TOPDIR)/Makefile
 # comment (loudly!) to the user --- who on earth can have
 # any modern system without symlinks ?
 install: $(LIBDEB) sendmail
-	@sdir=`echo $(SENDMAILPATH)|sed -e 's!^\(.*\)/\([^/]*\)$$!\1!'`; $(MKDIR) $$sdir;echo "  sdir = $$sdir"
+	@sdir=`echo $(SENDMAILPATH)|sed -e 's!/[^/]*$$!!'`; $(MKDIR) -p $$sdir;echo "  sdir = $$sdir"
 	@$(INSTALL) -m 0755 sendmail $(prefix)$(MAILBIN)/sendmail.x ; \
 	mv $(prefix)$(MAILBIN)/sendmail.x $(prefix)$(MAILBIN)/sendmail
 	@if [ $(LN_S) = "ln -s" -a				\
@@ -93,9 +93,9 @@ $(TOPDIR)/libc/libzc.a-a:
 $(TOPDIR)/libc/libzc.a:
 	cd $(TOPDIR)/libc ; $(MAKE) $(MFLAGS)
 
-$(TOPDIR)/lib/libz.a-a:
+$(TOPDIR)/lib/libzm.a-a:
 	cd $(TOPDIR)/lib ; $(MAKE) $(MFLAGS)
-$(TOPDIR)/lib/libz.a:
+$(TOPDIR)/lib/libzm.a:
 	cd $(TOPDIR)/lib ; $(MAKE) $(MFLAGS)
 
 
