@@ -1,35 +1,4 @@
-2002-07-11  Matti Aarnio  <mea@zmailer.org>
-
-	* sfio2002/*
-	    Entire subtree -- SFIO version 2002.1
-	    Basic injection, no adaptations yet.
-
-	* include/libz.h, lib/selfaddrs.c, lib/zgetifaddress.c,
-	  router/libdb/selfmatch.c, smtpserver/mxverify.c, 
-	  smtpserver/policytest.c, smtpserver/smtpserver.h,
-	  transports/smtp/smtp.c, transports/smtp/smtp.h:
-	    Moving commonly used 'Usockaddr' type into libz.h,
-	    and updating interfaces playing with addresses to
-	    use that type for the parameters.
-
-	* proto/smtpserver.conf.in, smtpserver/cfgread.c:
-	    Eugene Crosser noticed that binding to named interface
-	    does not quite succeed..  Address storage goes into
-	    slightly wrong place -> binding fails.
-
 2002-07-05  Matti Aarnio  <mea@zmailer.org>
-
-	* smtpserver/smtpcmds.c:
-	    A practically unexploitable potential buffer overflow.
-	    Exploit requires presense of 'h' flag in EHLO greeting
-	    match patterns (non documented, non-default style flag),
-	    and that the host address reversal text is long in the
-	    extreme. Getting the server to crash is less difficult,
-	    than to get it to execute anything..   Repeat: A 'h' must
-	    be present in style-flags at the end of the smtpserver.conf
-	    file EHLO/HELO-patterns, AND the hostname reversal PTR text
-	    must be longer than around 100 bytes.  Then, maybe, it will
-	    be possible to feed working buffer overflow exploit..
 
 	* Makefile.in:
 	    Version 2.99.56-pre3 (CVS tagged  2-99-56-pre3)

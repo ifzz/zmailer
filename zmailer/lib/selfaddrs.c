@@ -59,6 +59,14 @@
 #include <string.h>
 #include <errno.h>
 
+union sockaddr_uni {
+    struct sockaddr     sa;
+    struct sockaddr_in  v4;
+#if defined(AF_INET6) && defined(INET6)
+    struct sockaddr_in6 v6;
+#endif
+};
+
 #include "libc.h"
 #include "zmalloc.h"
 #include "libz.h"
@@ -94,14 +102,14 @@ struct mbuf;
 
 int
 loadifaddresses(sockaddrp)
-     Usockaddr ***sockaddrp;
+struct sockaddr ***sockaddrp;
 {
 	int i;
 	int sapcount = -1;
 	int sapspace = 2;
-	Usockaddr **sap;
+	union sockaddr_uni **sap;
 
-	sap = (void*)malloc(sizeof(Usockaddr*) * (sapspace + 2));
+	sap = (void*)malloc(sizeof(union sockaddr_uni*) * (sapspace + 2));
 
 	if (! sap)
 	  return -3; /* UAARGH! */
@@ -124,7 +132,7 @@ loadifaddresses(sockaddrp)
 
 	      if (sapcount +2 >= sapspace) {
 		sapspace <<= 1;
-		sap = (void*)realloc(sap, (sizeof(Usockaddr*) *
+		sap = (void*)realloc(sap, (sizeof(union sockaddr_uni*) *
 					   (sapspace + 2)));
 	      }
 
@@ -139,7 +147,7 @@ loadifaddresses(sockaddrp)
 
 		/* pick the whole sockaddr package! */
 		memcpy(si4, sa, sizeof(*si4));
-		sap[++sapcount] = (Usockaddr *)si4;
+		sap[++sapcount] = (union sockaddr_uni *)si4;
 	      }
 
 #if defined(AF_INET6) && defined(INET6)
@@ -150,7 +158,7 @@ loadifaddresses(sockaddrp)
 
 		/* pick the whole sockaddr package! */
 		memcpy(si6, sa, sizeof(*si6));
-		sap[++sapcount] = (Usockaddr *)si6;
+		sap[++sapcount] = (union sockaddr_uni *)si6;
 	      }
 #endif
 	    }
@@ -215,7 +223,7 @@ loadifaddresses(sockaddrp)
 	  for (i = 0; i < lifc.lifc_len; ) {
 
 	    struct lifreq *lifr = (struct lifreq *) &lifc.lifc_buf[i];
-	    Usockaddr *sa = (Usockaddr *) &lifr->lifr_addr;
+	    union sockaddr_uni *sa = (union sockaddr_uni *) &lifr->lifr_addr;
 #ifdef SIOCGLIFFLAGS
 	    struct lifreq lifrf;
 #endif
@@ -267,7 +275,7 @@ loadifaddresses(sockaddrp)
 
 	    if (sapcount +2 >= sapspace) {
 	      sapspace <<= 1;
-	      sap = (void*)realloc(sap, (sizeof(Usockaddr*) *
+	      sap = (void*)realloc(sap, (sizeof(union sockaddr_uni*) *
 					 (sapspace + 2)));
 	    }
 
@@ -284,7 +292,7 @@ loadifaddresses(sockaddrp)
 
 	      /* pick the whole sockaddr package! */
 	      memcpy(si4, sa, sizeof(*si4));
-	      sap[++sapcount] = (Usockaddr *)si4;
+	      sap[++sapcount] = (union sockaddr_uni *)si4;
 	    } else if (sa->sa.sa_family == AF_INET6) {
 	      struct sockaddr_in6 *si6 = (void*)malloc(sizeof(*si6));
 	      if (si6 == NULL)
@@ -292,7 +300,7 @@ loadifaddresses(sockaddrp)
 
 	      /* pick the whole sockaddr package! */
 	      memcpy(si6, sa, sizeof(*si6));
-	      sap[++sapcount] = (Usockaddr *)si6;
+	      sap[++sapcount] = (union sockaddr_uni *)si6;
 	    }
 	  }
 
@@ -355,7 +363,7 @@ done_this_ipv6:
 	  for (i = 0; i < ifc.ifc_len; ) {
 
 	    struct ifreq *ifr = (struct ifreq *) &ifc.ifc_buf[i];
-	    Usockaddr *sa = (Usockaddr *) &ifr->ifr_addr;
+	    union sockaddr_uni *sa = (union sockaddr_uni *) &ifr->ifr_addr;
 #ifdef SIOCGIFFLAGS
 	    struct ifreq ifrf;
 #endif
@@ -405,7 +413,7 @@ done_this_ipv6:
 
 	    if (sapcount +2 >= sapspace) {
 	      sapspace <<= 1;
-	      sap = (void*)realloc(sap, (sizeof(Usockaddr*) *
+	      sap = (void*)realloc(sap, (sizeof(union sockaddr_uni*) *
 					 (sapspace + 2)));
 	    }
 	    if (! sap) {
@@ -414,13 +422,13 @@ done_this_ipv6:
 	      return -4; /* UAARGH! */
 	    }
 
-	    if (sa->v4.sin_family == AF_INET) {
+	    if (sa->sa.sa_family == AF_INET) {
 	      struct sockaddr_in *si4 = (void*)malloc(sizeof(*si4));
 	      if (si4 == NULL)
 		break;
 	      /* pick the whole sockaddr package! */
 	      memcpy(si4, &ifr->ifr_addr, sizeof(*si4));
-	      sap[++sapcount] = (Usockaddr *)si4;
+	      sap[++sapcount] = (union sockaddr_uni *)si4;
 	    }
 	  }
 	  close(s);
@@ -435,7 +443,7 @@ done_this_ipv6:
 
 #endif /* not HAVE_GETIFADDRS */
 
-	  *sockaddrp = sap;
+	  *sockaddrp = (struct sockaddr **)sap;
 
 	  sap[++sapcount] = NULL;
 
@@ -445,7 +453,7 @@ done_this_ipv6:
 #ifndef TESTMODE /* We test ONLY of  loadifaddresses() routine! */
 
 static             int    nmyaddrs = 0;
-static Usockaddr  ** myaddrs = NULL;
+static union sockaddr_uni  ** myaddrs = NULL;
 
 static void stashmyaddress __((const char *));
 static void
@@ -454,9 +462,14 @@ stashmyaddress(host)
 {
 	int naddrs;
 	struct hostent *hp, hent;
+	union {
+	  struct in_addr ia4;
+#if defined(AF_INET6) && defined(INET6)
+	  struct in6_addr ia6;
+#endif
+	} au;
 	int addrsiz, af, rc;
 	void *addrs[2];
-	Usockaddr au;
 
 	if (host == NULL || *host == 0) return;
 
@@ -477,13 +490,13 @@ stashmyaddress(host)
 	  if (strncasecmp(host,"[IPv6:",6)==0) {
 	    af = AF_INET6;
 	    addrsiz = IN6ADDRSZ;
-	    rc = inet_pton(af, host+6, &au.v6);
+	    rc = inet_pton(af, host+6, &au.ia6);
 	  } else
 #endif
 	    if (*host == '[') {
 	      af = AF_INET;
 	      addrsiz = INADDRSZ;
-	      rc = inet_pton(af, host+1, &au.v4);
+	      rc = inet_pton(af, host+1, &au.ia4);
 	    } else
 	      return;
 
@@ -517,31 +530,33 @@ stashmyaddress(host)
 	/* malloc(size) == realloc(NULL, size) */
 	myaddrs = (void*)realloc((void*)myaddrs,
 				 (nmyaddrs + naddrs +1) *
-				 sizeof(Usockaddr*));
+				 sizeof(union sockaddr_uni*));
 
 	if (!myaddrs) return; /* Uurgh.... */
 
 	for (hp_init(hp); *hp_getaddr() != NULL; hp_nextaddr()) {
 	  if (hp->h_addrtype == AF_INET) {
-	    Usockaddr *si;
+	    struct sockaddr_in *si;
 	    si = (void*)malloc(sizeof(*si));
-	    if (!si) return;
+	    if (!si) {
+	      return;
+	    }
+	    myaddrs[nmyaddrs++] = (union sockaddr_uni *) si;
 	    memset(si,0,sizeof(*si));
-
-	    myaddrs[nmyaddrs++] = si;
-	    si->v4.sin_family = AF_INET;
-	    memcpy(&si->v4.sin_addr.s_addr, *hp_getaddr(), hp->h_length);
+	    si->sin_family = AF_INET;
+	    memcpy(&si->sin_addr.s_addr, *hp_getaddr(), hp->h_length);
 	  }
 #if defined(AF_INET6) && defined(INET6)
 	  if (hp->h_addrtype == AF_INET6) {
-	    Usockaddr *si6;
+	    struct sockaddr_in6 *si6;
 	    si6 = (void*)malloc(sizeof(*si6));
-	    if (!si6) return;
+	    if (!si6) {
+	      return;
+	    }
+	    myaddrs[nmyaddrs++] = (union sockaddr_uni *) si6;
 	    memset(si6,0,sizeof(*si6));
-
-	    myaddrs[nmyaddrs++] = si6;
-	    si6->v6.sin6_family = AF_INET6;
-	    memcpy(&si6->v6.sin6_addr.s6_addr, *hp_getaddr(), hp->h_length);
+	    si6->sin6_family = AF_INET;
+	    memcpy(&si6->sin6_addr.s6_addr, *hp_getaddr(), hp->h_length);
 	  }
 #endif
 	}
@@ -553,7 +568,7 @@ stashmyaddresses(host)
 const char *host;
 {
 	const char *s1, *s2, *zenv;
-	Usockaddr **sa;
+	union sockaddr_uni **sa;
 	int sacnt;
 
 	/* Clear them all away */
@@ -569,7 +584,7 @@ const char *host;
 
 	/* Now start fillig -- interface addresses, if you can get them */
 
-	sacnt = loadifaddresses( &sa );
+	sacnt = loadifaddresses((struct sockaddr ***)&sa);
 
 	if (sacnt > 0) {
 	  /* Okay, we GOT some addresses, I bet we got them all!
@@ -607,17 +622,17 @@ const char *host;
 
 int
 matchmyaddress(_sa)
-	Usockaddr *_sa;
+	struct sockaddr *_sa;
 {
 	int i;
-	Usockaddr *sau = _sa;
+	union sockaddr_uni *sau = (union sockaddr_uni *) _sa;
 
 	if (!myaddrs)
 		stashmyaddresses(NULL);
 	if (!myaddrs) return 0; /* Don't know my addresses ! */
 	
 	/* Match loopback net.. */
-	if (sau->v4.sin_family == AF_INET) {
+	if (sau->sa.sa_family == AF_INET) {
 	  int net;
 
 	  net = (ntohl(sau->v4.sin_addr.s_addr) >> 24) & 0xFF;
@@ -631,12 +646,12 @@ matchmyaddress(_sa)
 
 	for (i = 0; i < nmyaddrs; ++i) {
 	  /* if this is myself, skip to next MX host */
-	  if (sau->v4.sin_family == myaddrs[i]->v4.sin_family) {
-	    if (sau->v4.sin_family == AF_INET &&
+	  if (sau->sa.sa_family == myaddrs[i]->sa.sa_family) {
+	    if (sau->sa.sa_family == AF_INET &&
 		memcmp(&sau->v4.sin_addr, &myaddrs[i]->v4.sin_addr, 4) == 0)
 	      return 1;
 #if defined(AF_INET6) && defined(INET6)
-	    if (sau->v4.sin_family == AF_INET6 &&
+	    if (sau->sa.sa_family == AF_INET6 &&
 		memcmp(&sau->v6.sin6_addr, &myaddrs[i]->v6.sin6_addr, 16) == 0)
 	      return 1;
 #endif
@@ -653,7 +668,7 @@ matchmyaddresses(ai)
 	for ( ; ai ; ai = ai->ai_next ) {
 	  i = 0;
 	  if (ai->ai_addr)
-	    i = matchmyaddress((Usockaddr*)ai->ai_addr);
+	    i = matchmyaddress(ai->ai_addr);
 	  if (i) return i;
 	}
 	return 0;

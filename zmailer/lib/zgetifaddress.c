@@ -91,7 +91,7 @@ int
 zgetifaddress(af, ifname, sap)
      int af;
      const char *ifname;
-     Usockaddr * sap;
+     struct sockaddr * sap;
 {
 	int i;
 
@@ -99,8 +99,6 @@ zgetifaddress(af, ifname, sap)
 	/* #warning "GETIFADDRS() code chosen" */
 	{
 	  struct ifaddrs *ifar = NULL, *ifa;
-
-	  if (sap == NULL) return -1; /* Bad param! */
 
 	  i = getifaddrs( &ifar );
 	  if (i < 0) {
@@ -125,18 +123,24 @@ zgetifaddress(af, ifname, sap)
 		continue; /* Nope.. */
 
 	      if (sa->sa_family == AF_INET) {
+		struct sockaddr_in *si4 = (void*)sap;
+
+		if (si4 == NULL) break; /* Bad param! */
 
 		/* pick the whole sockaddr package! */
-		memcpy(sap, sa, sizeof(struct sockaddr_in));
+		memcpy(si4, sa, sizeof(*si4));
 		i = 0; /* Found! */
 		break;
 	      }
 
 #if defined(AF_INET6) && defined(INET6)
 	      if (sa->sa_family == AF_INET6) {
+		struct sockaddr_in6 *si6 = (void*)sap;
+
+		if (si6 == NULL) break;
 
 		/* pick the whole sockaddr package! */
-		memcpy(sap, sa, sizeof(struct sockaddr_in6));
+		memcpy(si6, sa, sizeof(*si6));
 		i = 0;
 		break;
 	      }
